@@ -25,7 +25,7 @@ except ImportError:  # pragma: no cover - source tree without the generated file
 # deliberately independent of the package version above: bump it whenever the
 # generated schema under data/ changes. CI fails a PR that changes the generated
 # schema without bumping this constant.
-SCHEMA_VERSION = "0.1.0"
+SCHEMA_VERSION = "1.0.0"
 
 __all__ = [
     "AAVSOFilters",
