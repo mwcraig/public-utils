@@ -40,3 +40,34 @@ jobs:
 
       - name: Run tests
         run: uv run pytest
+
+  schema-files:
+    # Guard against stale generated files and schema changes without a
+    # SCHEMA_VERSION bump. Only meaningful for PRs, where there is a base ref.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: schemas/starlist
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Check generated schema files are current
+        run: |
+          uv run poe generate
+          git diff --exit-code -- data/
+
+      - name: Check SCHEMA_VERSION was bumped if the schema changed
+        run: |
+          git fetch origin ${{ github.base_ref }}
+          uv run poe check-schema-version --base origin/${{ github.base_ref }}

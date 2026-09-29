@@ -313,6 +313,37 @@
           "type": "string",
           "unit": "none"
         },
+        "photometry_software": {
+          "description": "List of software used to produce this photometry",
+          "examples": [
+            [
+              "bandaid 1.2.3",
+              "browser-photometry 4.5.6"
+            ]
+          ],
+          "items": {
+            "type": "string"
+          },
+          "title": "Photometry Software",
+          "type": "array",
+          "unit": "none"
+        },
+        "absolute_focus": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Absolute focus position of the telescope, if available",
+          "examples": [
+            1823.4
+          ],
+          "title": "Absolute Focus Position",
+          "unit": "none"
+        },
         "staritems": {
           "description": "List of stars detected in the image",
           "examples": [
@@ -345,6 +376,8 @@
         "egain",
         "fwhm",
         "refframe",
+        "photometry_software",
+        "absolute_focus",
         "staritems"
       ],
       "title": "StarList",
@@ -354,10 +387,10 @@
   "description": "Class to hold a list for which each entry is a star list.",
   "properties": {
     "schema_version": {
-      "default": "0.1.dev63+g61de51202.d20260609",
+      "default": "0.1.0",
       "description": "An AAVSO-assigned string that identifies the schema version",
       "examples": [
-        "0.0.1"
+        "0.1.0"
       ],
       "title": "Starlist Schema Version",
       "type": "string",
