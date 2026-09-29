@@ -375,6 +375,24 @@ class StarList(BaseModel, PrettyPrintMixin, GenerateInstanceFromExamplesMixin):
             examples=["ICRS"]
         )
     ]
+    photometry_software: Annotated[
+        list[str],
+        Field(
+            title="Photometry Software",
+            description="List of software used to produce this photometry",
+            json_schema_extra=dict(unit="none"),
+            examples=[["bandaid 1.2.3", "browser-photometry 4.5.6"]]
+        )
+    ]
+    absolute_focus: Annotated[
+        float | None,
+        Field(
+            title="Absolute Focus Position",
+            description="Absolute focus position of the telescope, if available",
+            json_schema_extra=dict(unit="none"),
+            examples=[1823.4]
+        )
+    ]
     staritems: Annotated[
         list[StarItem],
         Field(
