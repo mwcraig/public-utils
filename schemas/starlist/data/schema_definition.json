@@ -387,10 +387,10 @@
   "description": "Class to hold a list for which each entry is a star list.",
   "properties": {
     "schema_version": {
-      "default": "0.1.0",
+      "default": "1.0.0",
       "description": "An AAVSO-assigned string that identifies the schema version",
       "examples": [
-        "0.1.0"
+        "1.0.0"
       ],
       "title": "Starlist Schema Version",
       "type": "string",
