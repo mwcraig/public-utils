@@ -5,10 +5,10 @@ from astropy.table import Table
 
 from aavso_starlist_schema import (
     DATA_DIR,
+    SCHEMA_VERSION,
     StarItem,
     StarList,
     StarListSet,
-    __version__,
     _generate_markdown,
     cli,
     generate_star_list_set_schema,
@@ -57,13 +57,16 @@ def test_starlist_json():
         expected_content = json.load(f)
 
     current_schema = json.loads(generate_star_list_set_schema())
-    if "dev" in __version__:
-        # The schema contains the version number, which will be different
-        # in a source install.
-        # If we are in a source install, we want to ignore the version number.
-        current_schema["properties"]["schema_version"]["default"] = expected_content["properties"]["schema_version"]["default"]
 
     assert current_schema == expected_content
+
+
+def test_schema_version_is_embedded():
+    # The schema version is a hand-maintained constant, independent of the
+    # package version, so generation is deterministic.
+    schema = json.loads(generate_star_list_set_schema())
+    assert schema["properties"]["schema_version"]["default"] == SCHEMA_VERSION
+    assert StarListSet(star_lists=[]).schema_version == SCHEMA_VERSION
 
 
 def test_make_star_list_from_table_of_items():

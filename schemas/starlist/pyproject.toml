@@ -32,6 +32,8 @@ test = [
 dev = [
   "aavso-starlist-schema[test]",
   "hatch-vcs",
+  "poethepoet",
+  "pre-commit",
   "ruff",
 ]
 
@@ -55,6 +57,14 @@ version-file = "_aavso_version.py"
 
 [tool.hatch.build.targets.wheel]
 include = ["aavso_starlist_schema.py", "_aavso_version.py", "data/**"]
+
+[tool.poe.tasks]
+gen-json.cmd = "aavso-starlist-schema data/schema_definition"
+gen-json.help = "Regenerate data/schema_definition.json"
+gen-markdown.cmd = "aavso-starlist-schema data/schema_definition --markdown"
+gen-markdown.help = "Regenerate data/schema_definition.md"
+generate.sequence = ["gen-json", "gen-markdown"]
+generate.help = "Regenerate both reference schema files under data/"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

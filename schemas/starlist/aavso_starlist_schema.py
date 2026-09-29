@@ -21,6 +21,12 @@ try:
 except ImportError:  # pragma: no cover - source tree without the generated file
     __version__ = "0.0.0"
 
+# Version of the *schema* (the contract manufacturers write files against). This is
+# deliberately independent of the package version above: bump it whenever the
+# generated schema under data/ changes. CI fails a PR that changes the generated
+# schema without bumping this constant.
+SCHEMA_VERSION = "0.1.0"
+
 __all__ = [
     "AAVSOFilters",
     "StarItem",
@@ -31,6 +37,7 @@ __all__ = [
     "main",
     "cli",
     "DATA_DIR",
+    "SCHEMA_VERSION",
 ]
 
 # Reference schema files (a shipped deliverable) live alongside this module, both
@@ -466,8 +473,8 @@ class StarListSet(BaseModel, PrettyPrintMixin, GenerateInstanceFromExamplesMixin
             title="Starlist Schema Version",
             description="An AAVSO-assigned string that identifies the schema version",
             json_schema_extra=dict(unit="none"),
-            examples=["0.0.1"],
-            default=__version__,
+            examples=[SCHEMA_VERSION],
+            default=SCHEMA_VERSION,
         )
     ]
     star_lists: Annotated[
