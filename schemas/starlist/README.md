@@ -66,15 +66,85 @@ The pre-commit hook described under Development does this automatically.
 
 ### Schema versioning
 
-The schema has its own version, `SCHEMA_VERSION` in `aavso_starlist_schema.py`,
-which is embedded in the generated files as the default `schema_version`. It is
-deliberately **independent of the package version** (which comes from git tags):
-the schema version identifies the contract that starlist files are written
-against, so it only changes when the schema itself changes.
+The schema has its own hand-maintained semantic version, `SCHEMA_VERSION` in
+`aavso_starlist_schema.py`. It is deliberately **independent of the package
+version** (which comes from git tags): the schema version identifies the
+contract that starlist files are written against, so it only changes when the
+schema itself changes.
 
-Bump `SCHEMA_VERSION` whenever a change alters the generated schema, then run
-`uv run poe generate`. CI checks that the committed reference files match the
-schema module.
+`schema_version` is a required field of a starlist file (`StarListSet`). There
+is no default: code that builds a `StarListSet` passes
+`schema_version=SCHEMA_VERSION` explicitly. The generated
+`data/schema_definition.json` also states its own version in a top-level
+`version` key.
+
+#### Version policy
+
+| Change | From 1.0.0 on | While 0.y.z |
+| --- | --- | --- |
+| Description/docs only | patch | patch |
+| New optional field | minor | minor |
+| New required field, removal, changed meaning | major | minor |
+
+A *generation* is the set of mutually compatible versions: `0.2` for 0.2.z,
+`1` for 1.y.z, and `legacy` for everything before 0.2.0 (files with no
+`schema_version`, or package-version strings such as `0.0.1.dev451+gde1568f`).
+Crossing a generation boundary requires a migration.
+
+Every schema version is archived unchanged under `data/v<version>/` (for
+example `data/v0.2.0/`). `data/schema_definition.*` is always the current
+schema; the archive is the record of what each version looked like. The tests
+require the current files to match the archive for `SCHEMA_VERSION`, so a
+schema change without a version bump fails `pytest`, and CI rejects a pull
+request that modifies or deletes an archived file.
+
+#### Changing the schema
+
+1. Bump `SCHEMA_VERSION` in `aavso_starlist_schema.py` following the policy
+   above.
+2. Run `uv run poe generate` to regenerate `data/schema_definition.*`.
+3. Run `uv run poe archive` to copy them to `data/v<SCHEMA_VERSION>/`.
+4. Run `uv run pytest`.
+
+A change that crosses a generation boundary also needs:
+
+5. A migration function from the old generation to the new one, registered in
+   `_MIGRATIONS` in `aavso_starlist_schema.py`. A migration takes and returns a
+   plain dict and is never edited once released.
+6. A before/after fixture pair under `tests/data/migrations/<old>_to_<new>/`.
+
+#### Reading starlist files
+
+Use `StarListSet.from_json(text)` instead of
+`StarListSet.model_validate_json(text)`. It parses the JSON, upgrades older
+files to the current schema version with `upgrade()`, then validates.
+
+```python
+from pathlib import Path
+
+from aavso_starlist_schema import StarListSet
+
+star_list_set = StarListSet.from_json(Path("starlists.json").read_text())
+```
+
+`upgrade(data)` is also available directly: it takes the parsed dict and returns
+a dict at the current version (unchanged if already current; it does not modify
+its input).
+
+When a file is upgraded, a `SchemaMigrationWarning` is issued naming the
+original version, the new version and what changed. The upgraded object is
+derived data; the submitted file remains the record.
+
+Two errors are specific to versioning. Both derive from `SchemaVersionError`,
+which is deliberately not a `ValueError`:
+
+- `NewerSchemaVersionError`: the file was written against a newer schema than
+  this version of the package understands. Upgrade the package.
+- `UnsupportedSchemaVersionError`: the version cannot be understood or there is
+  no migration path from it.
+
+A legacy file whose contents do not match the schema still fails with the usual
+pydantic `ValidationError`.
 
 ## Development
 
