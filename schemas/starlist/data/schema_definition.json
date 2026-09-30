@@ -354,11 +354,11 @@
   "description": "Class to hold a list for which each entry is a star list.",
   "properties": {
     "schema_version": {
-      "default": "0.1.0",
-      "description": "An AAVSO-assigned string that identifies the schema version",
+      "description": "Required. The version of this schema that the file was written against, assigned by AAVSO",
       "examples": [
-        "0.1.0"
+        "0.2.0"
       ],
+      "pattern": "^0\\.2\\.\\d+$",
       "title": "Starlist Schema Version",
       "type": "string",
       "unit": "none"
@@ -377,8 +377,10 @@
     }
   },
   "required": [
+    "schema_version",
     "star_lists"
   ],
   "title": "StarListSet",
-  "type": "object"
+  "type": "object",
+  "version": "0.2.0"
 }

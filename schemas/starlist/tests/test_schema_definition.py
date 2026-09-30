@@ -2,6 +2,7 @@ import json
 
 import pytest
 from astropy.table import Table
+from pydantic import ValidationError
 
 from aavso_starlist_schema import (
     DATA_DIR,
@@ -65,8 +66,36 @@ def test_schema_version_is_embedded():
     # The schema version is a hand-maintained constant, independent of the
     # package version, so generation is deterministic.
     schema = json.loads(generate_star_list_set_schema())
-    assert schema["properties"]["schema_version"]["default"] == SCHEMA_VERSION
-    assert StarListSet(star_lists=[]).schema_version == SCHEMA_VERSION
+    assert schema["version"] == SCHEMA_VERSION
+    assert "schema_version" in schema["required"]
+    assert "default" not in schema["properties"]["schema_version"]
+    # The field is required, so omitting it is a validation error.
+    with pytest.raises(ValidationError):
+        StarListSet(star_lists=[])
+
+
+def _next_generation_version():
+    major, minor, _ = (int(part) for part in SCHEMA_VERSION.split("."))
+    return f"0.{minor + 1}.0" if major == 0 else f"{major + 1}.0.0"
+
+
+@pytest.mark.parametrize(
+    "bad_version",
+    [
+        "banana",
+        "0.0.1.dev451+gde1568f",  # legacy dev string
+        "0.1.0",  # before versioning began
+        _next_generation_version(),
+    ],
+)
+def test_model_rejects_versions_outside_current_generation(bad_version):
+    with pytest.raises(ValidationError):
+        StarListSet(schema_version=bad_version, star_lists=[])
+
+
+def test_model_accepts_patch_versions_of_current_generation():
+    major, minor, patch = SCHEMA_VERSION.split(".")
+    StarListSet(schema_version=f"{major}.{minor}.{int(patch) + 1}", star_lists=[])
 
 
 def test_make_star_list_from_table_of_items():

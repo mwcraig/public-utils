@@ -6,14 +6,18 @@ the schema as JSON or as a markdown table, and a Fire-based command-line entry
 point.
 """
 
+import copy
 import json
+import re
+import warnings
 from collections import defaultdict
+from collections.abc import Callable
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, NamedTuple
 
 from astropy.table import Table
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_snake
 
 try:
@@ -25,7 +29,7 @@ except ImportError:  # pragma: no cover - source tree without the generated file
 # deliberately independent of the package version above: bump it whenever the
 # generated schema under data/ changes. CI fails a PR that changes the generated
 # schema without bumping this constant.
-SCHEMA_VERSION = "0.1.0"
+SCHEMA_VERSION = "0.2.0"
 
 __all__ = [
     "AAVSOFilters",
@@ -38,6 +42,11 @@ __all__ = [
     "cli",
     "DATA_DIR",
     "SCHEMA_VERSION",
+    "upgrade",
+    "SchemaVersionError",
+    "NewerSchemaVersionError",
+    "UnsupportedSchemaVersionError",
+    "SchemaMigrationWarning",
 ]
 
 # Reference schema files (a shipped deliverable) live alongside this module, both
@@ -461,20 +470,185 @@ class StarList(BaseModel, PrettyPrintMixin, GenerateInstanceFromExamplesMixin):
 
         return Table(table_dict, meta=table_meta)
 
+
+def _version_pattern(version):
+    # Regex matching every version in the same generation as `version`: 0.y.z
+    # versions are only compatible within the same minor, x.y.z (x >= 1) within
+    # the same major.
+    major, minor, _ = version.split(".")
+    if major == "0":
+        return rf"^0\.{minor}\.\d+$"
+    return rf"^{major}\.\d+\.\d+$"
+
+
+class SchemaVersionError(Exception):
+    """
+    Base class for problems with the schema version of a starlist file.
+
+    Deliberately not a `ValueError`, so that callers who catch validation
+    errors do not silently swallow a version problem.
+    """
+
+
+class NewerSchemaVersionError(SchemaVersionError):
+    """The file was written against a newer schema than this reader supports."""
+
+
+class UnsupportedSchemaVersionError(SchemaVersionError):
+    """The schema version is unparseable, or there is no migration path from it."""
+
+
+class SchemaMigrationWarning(UserWarning):
+    """A starlist file was written against an older schema and was upgraded."""
+
+
+_STRICT_SEMVER = re.compile(r"(\d+)\.(\d+)\.(\d+)")
+
+
+def _parse_semver(version):
+    # Return (major, minor, patch) for a strict X.Y.Z string, otherwise None.
+    if not isinstance(version, str):
+        return None
+    match = _STRICT_SEMVER.fullmatch(version)
+    return tuple(int(part) for part in match.groups()) if match else None
+
+
+def _generation(version):
+    """
+    Return the generation (set of mutually compatible versions) of a version.
+
+    ``"legacy"`` covers everything before 0.2.0, including a missing version.
+    """
+    if version is None:
+        return "legacy"
+    if not isinstance(version, str):
+        raise UnsupportedSchemaVersionError(
+            f"schema_version must be a string, got {type(version).__name__}: {version!r}"
+        )
+    parsed = _parse_semver(version)
+    if parsed is None:
+        # Pre-versioning files carry the package version, e.g. 0.1.dev66+g6f57c4d02
+        if version.startswith("0."):
+            return "legacy"
+        raise UnsupportedSchemaVersionError(
+            f"Cannot interpret schema_version {version!r}; expected X.Y.Z"
+        )
+    if parsed < (0, 2, 0):
+        return "legacy"
+    if parsed[0] == 0:
+        return f"0.{parsed[1]}"
+    return str(parsed[0])
+
+
+class _Migration(NamedTuple):
+    target: str  # version the result conforms to
+    func: Callable[[dict], dict]  # frozen once released
+    summary: str  # what changed; goes into the warning
+
+
+def _migrate_legacy_to_0_2(data):
+    # Nothing to change: schema_version became required and the caller stamps it.
+    # The legacy version string is deliberately not interpreted.
+    return data
+
+
+# Keyed by the generation a file is in; the value takes it to the next generation.
+# The next breaking change adds an entry here, keyed by the generation being left.
+_MIGRATIONS = {
+    "legacy": _Migration(
+        "0.2.0",
+        _migrate_legacy_to_0_2,
+        "schema_version became required; no other field changed",
+    ),
+}
+
+
+def upgrade(data):
+    """
+    Upgrade raw starlist-set data to the current schema version.
+
+    Parameters
+    ----------
+    data : dict
+        The starlist set as read from JSON, before any validation.
+
+    Returns
+    -------
+    dict
+        ``data`` itself if it is already in the current generation, otherwise
+        an upgraded copy. The input is never modified.
+
+    Raises
+    ------
+    NewerSchemaVersionError
+        If the file was written against a newer schema than this reader.
+    UnsupportedSchemaVersionError
+        If the version cannot be interpreted or has no migration path.
+
+    Warns
+    -----
+    SchemaMigrationWarning
+        Once, if the data had to be migrated.
+    """
+    original = data.get("schema_version")
+    generation = _generation(original)
+    current_generation = _generation(SCHEMA_VERSION)
+
+    if generation == current_generation:
+        return data
+
+    if generation not in _MIGRATIONS:
+        parsed, supported = _parse_semver(original), _parse_semver(SCHEMA_VERSION)
+        if parsed is not None and parsed > supported:
+            raise NewerSchemaVersionError(
+                f"File has schema_version {original!r}, newer than the "
+                f"{SCHEMA_VERSION!r} this reader supports; upgrade the "
+                "aavso-starlist-schema package."
+            )
+        raise UnsupportedSchemaVersionError(
+            f"File has schema_version {original!r}, for which there is no "
+            f"migration to the {SCHEMA_VERSION!r} this reader supports."
+        )
+
+    upgraded = copy.deepcopy(data)
+    summaries = []
+    while generation != current_generation:
+        step = _MIGRATIONS[generation]
+        upgraded = step.func(upgraded)
+        upgraded["schema_version"] = step.target
+        summaries.append(f"{step.target}: {step.summary}")
+        generation = _generation(step.target)
+
+    was = "missing" if original is None else repr(original)
+    warnings.warn(
+        f"Starlist file schema_version was {was}; upgraded to "
+        f"{upgraded['schema_version']!r} ({'; '.join(summaries)}).",
+        SchemaMigrationWarning,
+        stacklevel=2,
+    )
+    return upgraded
+
+
 class StarListSet(BaseModel, PrettyPrintMixin, GenerateInstanceFromExamplesMixin):
     """
     Class to hold a list for which each entry is a star list.
     """
+    # Make the generated JSON schema state its own version.
+    model_config = ConfigDict(json_schema_extra={"version": SCHEMA_VERSION})
+
     # Put the version here because this is the file we expect manufacturers
     # to submit.
     schema_version: Annotated[
         str,
         Field(
             title="Starlist Schema Version",
-            description="An AAVSO-assigned string that identifies the schema version",
+            description=(
+                "Required. The version of this schema that the file was written "
+                "against, assigned by AAVSO"
+            ),
             json_schema_extra=dict(unit="none"),
             examples=[SCHEMA_VERSION],
-            default=SCHEMA_VERSION,
+            pattern=_version_pattern(SCHEMA_VERSION),
         )
     ]
     star_lists: Annotated[
@@ -486,6 +660,39 @@ class StarListSet(BaseModel, PrettyPrintMixin, GenerateInstanceFromExamplesMixin
             examples=[[]]
         )
     ]
+
+    @classmethod
+    def from_json(cls, text):
+        """
+        Create a StarListSet from JSON text, upgrading older schema versions.
+
+        Parameters
+        ----------
+        text : str
+            JSON text of a starlist set.
+
+        Returns
+        -------
+        StarListSet
+            An instance of the StarListSet class, at the current schema version.
+
+        Raises
+        ------
+        SchemaVersionError
+            If the file's schema version is newer than, or cannot be
+            migrated to, `SCHEMA_VERSION`.
+        pydantic.ValidationError
+            If the (upgraded) data does not match the schema.
+
+        Warns
+        -----
+        SchemaMigrationWarning
+            If the file was written against an older schema and was upgraded.
+        """
+        data = json.loads(text)
+        if isinstance(data, dict):
+            data = upgrade(data)
+        return cls.model_validate(data)
 
 
 def generate_starlist_schema():
