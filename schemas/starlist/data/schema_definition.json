@@ -313,37 +313,6 @@
           "type": "string",
           "unit": "none"
         },
-        "photometry_software": {
-          "description": "List of software used to produce this photometry",
-          "examples": [
-            [
-              "bandaid 1.2.3",
-              "browser-photometry 4.5.6"
-            ]
-          ],
-          "items": {
-            "type": "string"
-          },
-          "title": "Photometry Software",
-          "type": "array",
-          "unit": "none"
-        },
-        "absolute_focus": {
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Absolute focus position of the telescope, if available",
-          "examples": [
-            1823.4
-          ],
-          "title": "Absolute Focus Position",
-          "unit": "none"
-        },
         "staritems": {
           "description": "List of stars detected in the image",
           "examples": [
@@ -376,8 +345,6 @@
         "egain",
         "fwhm",
         "refframe",
-        "photometry_software",
-        "absolute_focus",
         "staritems"
       ],
       "title": "StarList",

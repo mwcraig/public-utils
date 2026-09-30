@@ -32,8 +32,6 @@
 | System gain | egain | float | e-/adu | Gain of the camera in e-/adu | 1.2 |
 | FWHM | fwhm | float | pixel | Typical full width at half maximum of the star image | 3.5 |
 | Coordinate Reference Frame | refframe | str | none | Reference frame of the observation | ICRS |
-| Photometry Software | photometry_software | list | none | List of software used to produce this photometry | ['bandaid 1.2.3', 'browser-photometry 4.5.6'] |
-| Absolute Focus Position | absolute_focus | float | None | none | Absolute focus position of the telescope, if available | 1823.4 |
 | Star Items | staritems | list | none | List of stars detected in the image | [] |
 
 
