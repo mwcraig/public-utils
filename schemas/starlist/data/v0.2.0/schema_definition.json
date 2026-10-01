@@ -1,6 +1,7 @@
 {
   "$defs": {
     "AAVSOFilters": {
+      "description": "Photometric filters a smart telescope may report.\n\nValues are AAVSO filter names. The list is restricted to the filters\nsuch telescopes actually use so that typos and unknown codes are\nrejected by the schema.",
       "enum": [
         "TG",
         "TR",

@@ -54,8 +54,14 @@ __all__ = [
 DATA_DIR = Path(__file__).parent / "data"
 
 
-# Restricted list that smart telescopes may report
 class AAVSOFilters(StrEnum):
+    """
+    Photometric filters a smart telescope may report.
+
+    Values are AAVSO filter names. The list is restricted to the filters
+    such telescopes actually use so that typos and unknown codes are
+    rejected by the schema.
+    """
     TG = "TG"
     TR = "TR"
     TB = "TB"
@@ -73,6 +79,12 @@ class AAVSOFilters(StrEnum):
 
 
 class PrettyPrintMixin:
+    """
+    Mixin to render a pydantic model's fields as a markdown table.
+
+    Expects every field to define ``title``, ``description``, ``examples``
+    and a ``unit`` entry in ``json_schema_extra``.
+    """
     @classmethod
     def markdown_table(cls):
         """
@@ -472,9 +484,24 @@ class StarList(BaseModel, PrettyPrintMixin, GenerateInstanceFromExamplesMixin):
 
 
 def _version_pattern(version):
-    # Regex matching every version in the same generation as `version`: 0.y.z
-    # versions are only compatible within the same minor, x.y.z (x >= 1) within
-    # the same major.
+    """
+    Build a regex matching every version in the same generation as ``version``.
+
+    Used as the ``pattern`` of the ``schema_version`` field, so the model
+    accepts only its own generation and everything else must go through
+    `upgrade`.
+
+    Parameters
+    ----------
+    version : str
+        A strict ``X.Y.Z`` version, normally `SCHEMA_VERSION`.
+
+    Returns
+    -------
+    str
+        Anchored regex. For ``0.y.z`` it matches the same minor only; for
+        ``x.y.z`` with ``x >= 1`` it matches the same major.
+    """
     major, minor, _ = version.split(".")
     if major == "0":
         return rf"^0\.{minor}\.\d+$"
@@ -485,6 +512,8 @@ class SchemaVersionError(Exception):
     """
     Base class for problems with the schema version of a starlist file.
 
+    Notes
+    -----
     Deliberately not a `ValueError`, so that callers who catch validation
     errors do not silently swallow a version problem.
     """
@@ -506,7 +535,22 @@ _STRICT_SEMVER = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 
 
 def _parse_semver(version):
-    # Return (major, minor, patch) for a strict X.Y.Z string, otherwise None.
+    """
+    Parse a strict ``X.Y.Z`` version string.
+
+    Parameters
+    ----------
+    version : object
+        The value found in a file's ``schema_version`` field.
+
+    Returns
+    -------
+    tuple of int or None
+        ``(major, minor, patch)``, or ``None`` if ``version`` is not a string
+        or has extra components, such as the package version
+        ``0.1.dev66+g6f57c4d02``. The caller decides whether ``None`` means
+        legacy or unsupported.
+    """
     if not isinstance(version, str):
         return None
     match = _STRICT_SEMVER.fullmatch(version)
@@ -515,9 +559,27 @@ def _parse_semver(version):
 
 def _generation(version):
     """
-    Return the generation (set of mutually compatible versions) of a version.
+    Determine the generation a schema version belongs to.
 
-    ``"legacy"`` covers everything before 0.2.0, including a missing version.
+    A generation is the set of mutually compatible versions: ``"0.y"`` for
+    ``0.y.z``, ``"x"`` for ``x.y.z`` with ``x >= 1``, and ``"legacy"`` for
+    everything before 0.2.0, including a missing version.
+
+    Parameters
+    ----------
+    version : str or None
+        The ``schema_version`` value from a file; ``None`` if absent.
+
+    Returns
+    -------
+    str
+        The generation name.
+
+    Raises
+    ------
+    UnsupportedSchemaVersionError
+        If ``version`` is not a string, or is a string that is neither
+        ``X.Y.Z`` nor a pre-versioning ``0.`` package version.
     """
     if version is None:
         return "legacy"
@@ -541,14 +603,39 @@ def _generation(version):
 
 
 class _Migration(NamedTuple):
+    """
+    One step of the migration chain, taking a file one generation forward.
+
+    Attributes
+    ----------
+    target : str
+        The schema version the migrated data conforms to.
+    func : callable
+        Takes the raw dict and returns the migrated dict. Frozen once released.
+    summary : str
+        What changed, for the migration warning.
+    """
     target: str  # version the result conforms to
     func: Callable[[dict], dict]  # frozen once released
     summary: str  # what changed; goes into the warning
 
 
 def _migrate_legacy_to_0_2(data):
-    # Nothing to change: schema_version became required and the caller stamps it.
-    # The legacy version string is deliberately not interpreted.
+    """
+    Migrate a pre-versioning (legacy) starlist set to schema version 0.2.0.
+
+    Parameters
+    ----------
+    data : dict
+        Raw starlist-set data from a legacy file.
+
+    Returns
+    -------
+    dict
+        ``data`` unchanged. The only difference at 0.2.0 is that
+        ``schema_version`` became required, and `upgrade` stamps the target
+        version. The legacy version string is deliberately not interpreted.
+    """
     return data
 
 
@@ -696,14 +783,46 @@ class StarListSet(BaseModel, PrettyPrintMixin, GenerateInstanceFromExamplesMixin
 
 
 def generate_starlist_schema():
+    """
+    Generate the JSON schema for a single `StarList`.
+
+    Returns
+    -------
+    str
+        The schema as indented JSON text.
+    """
     return json.dumps(StarList.model_json_schema(), indent=2)
 
 
 def generate_star_list_set_schema():
+    """
+    Generate the JSON schema for a `StarListSet`.
+
+    This is the schema of the file manufacturers submit, and what the
+    reference files under ``data/`` and the command line tool produce.
+
+    Returns
+    -------
+    str
+        The schema as indented JSON text.
+    """
     return json.dumps(StarListSet.model_json_schema(), indent=2)
 
 
 def _nice_name(name):
+    """
+    Turn a CamelCase class name into a title-case heading.
+
+    Parameters
+    ----------
+    name : str
+        A class name such as ``StarListSet``.
+
+    Returns
+    -------
+    str
+        Words separated by spaces, each capitalized: ``Star List Set``.
+    """
     # Convert the name to snake case
     snake_name = to_snake(name)
     return snake_name.replace("_", " ").title()
@@ -730,6 +849,17 @@ def _generate_markdown():
 
 
 def main(filename, markdown=False):
+    """
+    Write the `StarListSet` schema to a file, as JSON or as a markdown table.
+
+    Parameters
+    ----------
+    filename : str
+        Output path. Its suffix is replaced with ``.json`` or ``.md``.
+    markdown : bool, optional
+        If ``True``, write the markdown table instead of the JSON schema.
+        Default is ``False``.
+    """
     extension = ".md" if markdown else ".json"
     # Make sure the path has the right suffix
     p = Path(filename).with_suffix(extension)
@@ -744,6 +874,13 @@ def main(filename, markdown=False):
 
 
 def cli():
+    """
+    Run `main` as a command line program.
+
+    This is the ``aavso-starlist-schema`` console script; argument parsing is
+    handled by Fire, which is imported lazily so that importing the module
+    does not require it.
+    """
     import fire  # lazy import: keep `import aavso_starlist_schema` fire-free
 
     fire.Fire(main)

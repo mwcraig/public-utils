@@ -16,7 +16,16 @@ REFERENCE_FILES = ("schema_definition.json", "schema_definition.md")
 
 
 def archived_versions():
-    """Archived versions as ``(version tuple, directory)``, oldest first."""
+    """
+    Find every archived schema version under ``data/``.
+
+    Returns
+    -------
+    list of tuple
+        ``(version, directory)`` pairs, where ``version`` is a tuple of ints
+        parsed from the ``data/v<version>/`` directory name. Sorted oldest
+        first, so the last entry is the newest archive.
+    """
     found = []
     for directory in DATA_DIR.glob("v*"):
         if directory.is_dir():
@@ -27,6 +36,8 @@ def archived_versions():
 
 @pytest.mark.parametrize("name", REFERENCE_FILES)
 def test_current_schema_matches_its_archive(name):
+    # The generated reference file must be identical to the archived copy for
+    # SCHEMA_VERSION, so a schema change without a version bump fails here.
     archived = DATA_DIR / f"v{SCHEMA_VERSION}" / name
     assert archived.is_file(), (
         f"No archive for schema version {SCHEMA_VERSION}; run `uv run poe archive`."
@@ -39,6 +50,8 @@ def test_current_schema_matches_its_archive(name):
 
 
 def test_archives_are_complete_and_state_their_version():
+    # Every archive directory holds both reference files, and the JSON's version
+    # key matches the directory name.
     for _, directory in archived_versions():
         for name in REFERENCE_FILES:
             assert (directory / name).is_file(), f"{directory.name} is missing {name}"

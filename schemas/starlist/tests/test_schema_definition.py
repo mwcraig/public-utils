@@ -20,6 +20,8 @@ from aavso_starlist_schema import (
 
 @pytest.mark.parametrize("klass", [StarItem, StarList, StarListSet])
 def test_schema_has_all_require_properties(klass):
+    # Every field of every model carries a title, description, examples and a unit
+    # (scale, for obs_time), so the generated schema and markdown are complete.
     required_fields = [
         "title",
         "description",
@@ -44,6 +46,7 @@ def test_example_values_are_valid(klass):
 
 
 def test_starlist_markdown_table():
+    # The committed markdown reference file is current with the models.
     mdown_file = DATA_DIR / "schema_definition.md"
     with open(mdown_file) as f:
         mdown_file_content = f.read()
@@ -52,6 +55,7 @@ def test_starlist_markdown_table():
 
 
 def test_starlist_json():
+    # The committed JSON reference file is current with the models.
     json_file = DATA_DIR / "schema_definition.json"
 
     with open(json_file) as f:
@@ -75,6 +79,15 @@ def test_schema_version_is_embedded():
 
 
 def _next_generation_version():
+    """
+    Compute the first version of the generation after ``SCHEMA_VERSION``'s.
+
+    Returns
+    -------
+    str
+        The next minor while the schema is ``0.y.z``, and the next major from
+        1.0.0 on, so the tests stay correct as ``SCHEMA_VERSION`` moves.
+    """
     major, minor, _ = (int(part) for part in SCHEMA_VERSION.split("."))
     return f"0.{minor + 1}.0" if major == 0 else f"{major + 1}.0.0"
 
@@ -89,11 +102,15 @@ def _next_generation_version():
     ],
 )
 def test_model_rejects_versions_outside_current_generation(bad_version):
+    # The schema_version pattern admits only the current generation; anything
+    # else has to go through upgrade() first.
     with pytest.raises(ValidationError):
         StarListSet(schema_version=bad_version, star_lists=[])
 
 
 def test_model_accepts_patch_versions_of_current_generation():
+    # A higher patch version in the same generation is compatible and accepted
+    # directly, without upgrade().
     major, minor, patch = SCHEMA_VERSION.split(".")
     StarListSet(schema_version=f"{major}.{minor}.{int(patch) + 1}", star_lists=[])
 
