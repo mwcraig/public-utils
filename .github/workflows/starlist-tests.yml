@@ -42,7 +42,8 @@ jobs:
         run: uv run pytest
 
   schema-files:
-    # Guard against stale generated files. Only meaningful for PRs.
+    # Guard against stale generated files and schema changes without a
+    # SCHEMA_VERSION bump. Only meaningful for PRs, where there is a base ref.
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     defaults:
@@ -65,3 +66,11 @@ jobs:
         run: |
           uv run poe generate
           git diff --exit-code -- data/
+
+      - name: Check archived schema files are unchanged
+        # data/v<version>/ is the permanent record of each schema version. A PR
+        # may add an archive but never modify or delete one.
+        run: |
+          git fetch origin ${{ github.base_ref }}
+          git diff --exit-code --name-only --diff-filter=MD \
+            origin/${{ github.base_ref }}... -- 'data/v*/'
