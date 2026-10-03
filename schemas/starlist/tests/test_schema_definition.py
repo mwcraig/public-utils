@@ -1,8 +1,8 @@
 import json
+import re
 
 import pytest
 from astropy.table import Table
-from pydantic import ValidationError
 
 from aavso_starlist_schema import (
     DATA_DIR,
@@ -56,14 +56,10 @@ def test_starlist_markdown_table():
 
 def test_starlist_json():
     # The committed JSON reference file is current with the models.
+    # Compared as text, so key order and whitespace must match too.
     json_file = DATA_DIR / "schema_definition.json"
 
-    with open(json_file) as f:
-        expected_content = json.load(f)
-
-    current_schema = json.loads(generate_star_list_set_schema())
-
-    assert current_schema == expected_content
+    assert generate_star_list_set_schema() == json_file.read_text()
 
 
 def test_schema_version_is_embedded():
@@ -73,39 +69,26 @@ def test_schema_version_is_embedded():
     assert schema["version"] == SCHEMA_VERSION
     assert "schema_version" in schema["required"]
     assert "default" not in schema["properties"]["schema_version"]
-    # The field is required, so omitting it is a validation error.
-    with pytest.raises(ValidationError):
-        StarListSet(star_lists=[])
 
 
-def _next_generation_version():
-    """
-    Compute the first version of the generation after ``SCHEMA_VERSION``'s.
+def test_schema_pattern_rejects_versions_outside_current_generation(
+    next_generation_version,
+):
+    # The schema_version pattern in the generated schema admits only the
+    # current generation, so other tools validating a file against the schema
+    # reject anything else. (The model itself upgrades or raises a
+    # SchemaVersionError before the pattern is reached; see test_migration.py.)
+    schema = json.loads(generate_star_list_set_schema())
+    pattern = schema["properties"]["schema_version"]["pattern"]
 
-    Returns
-    -------
-    str
-        The next minor while the schema is ``0.y.z``, and the next major from
-        1.0.0 on, so the tests stay correct as ``SCHEMA_VERSION`` moves.
-    """
-    major, minor, _ = (int(part) for part in SCHEMA_VERSION.split("."))
-    return f"0.{minor + 1}.0" if major == 0 else f"{major + 1}.0.0"
-
-
-@pytest.mark.parametrize(
-    "bad_version",
-    [
+    assert re.search(pattern, SCHEMA_VERSION)
+    for bad_version in [
         "banana",
         "0.0.1.dev451+gde1568f",  # legacy dev string
         "0.1.0",  # before versioning began
-        _next_generation_version(),
-    ],
-)
-def test_model_rejects_versions_outside_current_generation(bad_version):
-    # The schema_version pattern admits only the current generation; anything
-    # else has to go through upgrade() first.
-    with pytest.raises(ValidationError):
-        StarListSet(schema_version=bad_version, star_lists=[])
+        next_generation_version,
+    ]:
+        assert not re.search(pattern, bad_version)
 
 
 def test_model_accepts_patch_versions_of_current_generation():

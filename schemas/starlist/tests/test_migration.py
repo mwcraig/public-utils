@@ -14,6 +14,7 @@ from aavso_starlist_schema import (
     StarListSet,
     UnsupportedSchemaVersionError,
     _generation,
+    _parse_semver,
     upgrade,
 )
 
@@ -68,23 +69,9 @@ def _legacy_data(version):
     return data
 
 
-def _next_generation_version():
+def _before_after_pair(generation):
     """
-    Compute the first version of the generation after ``SCHEMA_VERSION``'s.
-
-    Returns
-    -------
-    str
-        The next minor while the schema is ``0.y.z``, and the next major from
-        1.0.0 on, so the tests stay correct as ``SCHEMA_VERSION`` moves.
-    """
-    major, minor, _ = (int(part) for part in SCHEMA_VERSION.split("."))
-    return f"0.{minor + 1}.0" if major == 0 else f"{major + 1}.0.0"
-
-
-def _fixture_pair(generation):
-    """
-    Load the before/after fixture pair for the migration out of a generation.
+    Load the before/after sample files for the migration out of a generation.
 
     Parameters
     ----------
@@ -106,9 +93,9 @@ def _fixture_pair(generation):
 
 
 @pytest.mark.parametrize("generation", sorted(_MIGRATIONS))
-def test_each_migration_step_matches_its_fixture_pair(generation):
-    # Every migration needs a fixture pair; a missing directory fails here.
-    before, after = _fixture_pair(generation)
+def test_each_migration_step_matches_its_before_after_pair(generation):
+    # Every migration needs a before/after pair; a missing directory fails here.
+    before, after = _before_after_pair(generation)
     step = _MIGRATIONS[generation]
 
     result = step.func(copy.deepcopy(before))
@@ -118,9 +105,9 @@ def test_each_migration_step_matches_its_fixture_pair(generation):
 
 
 @pytest.mark.parametrize("generation", sorted(_MIGRATIONS))
-def test_fixture_files_upgrade_to_a_valid_current_file(generation):
+def test_before_files_upgrade_to_a_valid_current_file(generation):
     # Old files must stay readable however many generations later.
-    before, _ = _fixture_pair(generation)
+    before, _ = _before_after_pair(generation)
 
     with pytest.warns(SchemaMigrationWarning):
         upgraded = upgrade(before)
@@ -153,18 +140,35 @@ def test_current_version_is_returned_unchanged_without_warning():
         assert upgrade(data) is data
 
 
-@pytest.mark.parametrize("version", ["9.0.0", _next_generation_version()])
-def test_newer_version_raises(version):
+def test_upgraded_file_is_stamped_with_a_later_patch_version(monkeypatch):
+    # After a patch bump the last migration target is older than SCHEMA_VERSION;
+    # an upgraded file must still come out at the current version.
+    major, minor, patch = SCHEMA_VERSION.split(".")
+    patched = f"{major}.{minor}.{int(patch) + 1}"
+    monkeypatch.setattr("aavso_starlist_schema.SCHEMA_VERSION", patched)
+
+    with pytest.warns(SchemaMigrationWarning, match=re.escape(patched)):
+        result = upgrade(_legacy_data(None))
+
+    assert result["schema_version"] == patched
+
+
+def test_newer_version_raises(next_generation_version):
     # A version from a later generation is an error telling the user to upgrade
     # the package, not a validation error.
-    with pytest.raises(NewerSchemaVersionError, match=re.escape(version)):
-        upgrade(_example_data(schema_version=version))
+    for version in ["9.0.0", next_generation_version]:
+        with pytest.raises(NewerSchemaVersionError, match=re.escape(version)):
+            upgrade(_example_data(schema_version=version))
 
 
-@pytest.mark.parametrize("version", ["banana", 2, ["0.2.0"], "1.2"])
+@pytest.mark.parametrize(
+    "version",
+    ["banana", 2, ["0.2.0"], "1.2", None, "0.", "0.banana", "0.3.0rc1", "0.3.0.dev1"],
+)
 def test_unsupported_versions_raise(version):
-    # Non-strings and strings that are neither X.Y.Z nor a legacy 0.x string are
-    # rejected as uninterpretable.
+    # Non-strings, an explicit null, and strings that are neither X.Y.Z nor a
+    # legacy package version are rejected as uninterpretable, not treated as
+    # legacy. (None here is a null value; a missing field is legacy.)
     with pytest.raises(UnsupportedSchemaVersionError):
         upgrade(_example_data(schema_version=version))
 
@@ -176,10 +180,9 @@ def test_version_errors_are_not_value_errors():
     assert not issubclass(UnsupportedSchemaVersionError, ValueError)
 
 
-@pytest.mark.parametrize("version", LEGACY_VERSIONS)
-def test_upgrade_does_not_mutate_input(version):
+def test_upgrade_does_not_mutate_input():
     # upgrade() returns a new dict and leaves the caller's data untouched.
-    data = _legacy_data(version)
+    data = _legacy_data(None)
     snapshot = copy.deepcopy(data)
     with pytest.warns(SchemaMigrationWarning):
         result = upgrade(data)
@@ -191,15 +194,18 @@ def test_migration_chain_reaches_current_generation():
     # Following the migrations from the oldest generation must end at the
     # generation of SCHEMA_VERSION, with no gaps. This fails when a breaking
     # bump lands without its migration.
-    strict_semver = re.compile(r"\d+\.\d+\.\d+")
     generation = "legacy"
     seen = set()
     while generation != _generation(SCHEMA_VERSION):
         assert generation not in seen, f"migration cycle at {generation!r}"
         seen.add(generation)
-        assert generation in _MIGRATIONS, f"no migration out of generation {generation!r}"
+        assert generation in _MIGRATIONS, (
+            f"no migration out of generation {generation!r}; every new generation "
+            "needs a _MIGRATIONS entry and a before/after pair, see 'Changing "
+            "the schema' in README.md"
+        )
         target = _MIGRATIONS[generation].target
-        assert strict_semver.fullmatch(target)
+        assert _parse_semver(target) is not None
         generation = _generation(target)
 
     # No migration should start from the current generation or beyond.
@@ -207,21 +213,41 @@ def test_migration_chain_reaches_current_generation():
     assert seen == set(_MIGRATIONS)
 
 
-def test_from_json_upgrades_a_legacy_file():
-    # A real legacy file loads through from_json, upgraded, with all of its star
-    # lists and star items intact.
-    before, _ = _fixture_pair("legacy")
+def test_model_validate_json_upgrades_a_legacy_file():
+    # A real legacy file loads through the standard pydantic entry point,
+    # upgraded, with all of its star lists and star items intact.
+    before, _ = _before_after_pair("legacy")
     with pytest.warns(SchemaMigrationWarning):
-        result = StarListSet.from_json(json.dumps(before))
+        result = StarListSet.model_validate_json(json.dumps(before))
 
     assert result.schema_version == SCHEMA_VERSION
     assert len(result.star_lists) == len(before["star_lists"])
     assert len(result.star_lists[0].staritems) == len(before["star_lists"][0]["staritems"])
 
 
-def test_from_json_current_round_trip():
-    # from_json on a current-version file is a plain parse: no warning, equal object.
+def test_model_validate_json_current_round_trip():
+    # A current-version file is a plain parse: no warning, equal object.
     original = StarListSet.from_examples()
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        assert StarListSet.from_json(original.model_dump_json()) == original
+        assert StarListSet.model_validate_json(original.model_dump_json()) == original
+
+
+def test_model_validate_and_constructor_upgrade_legacy_data():
+    # The upgrade runs for every way of creating a StarListSet, not just from
+    # JSON text; data without a schema_version is legacy.
+    with pytest.warns(SchemaMigrationWarning):
+        assert StarListSet.model_validate({"star_lists": []}).schema_version == SCHEMA_VERSION
+    with pytest.warns(SchemaMigrationWarning):
+        assert StarListSet(star_lists=[]).schema_version == SCHEMA_VERSION
+
+
+def test_model_raises_version_errors_unwrapped(next_generation_version):
+    # Version problems surface from the model as SchemaVersionErrors, not
+    # wrapped in a pydantic ValidationError.
+    with pytest.raises(NewerSchemaVersionError):
+        StarListSet.model_validate_json(
+            json.dumps(_example_data(schema_version=next_generation_version))
+        )
+    with pytest.raises(UnsupportedSchemaVersionError):
+        StarListSet(schema_version="banana", star_lists=[])

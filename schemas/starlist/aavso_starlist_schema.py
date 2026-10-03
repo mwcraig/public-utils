@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Annotated, NamedTuple
 
 from astropy.table import Table
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_snake
 
 try:
@@ -27,8 +27,8 @@ except ImportError:  # pragma: no cover - source tree without the generated file
 
 # Version of the *schema* (the contract manufacturers write files against). This is
 # deliberately independent of the package version above: bump it whenever the
-# generated schema under data/ changes. CI fails a PR that changes the generated
-# schema without bumping this constant.
+# generated schema under data/ changes. The archive test fails if the generated
+# schema changes without bumping this constant.
 SCHEMA_VERSION = "0.2.0"
 
 __all__ = [
@@ -533,6 +533,10 @@ class SchemaMigrationWarning(UserWarning):
 
 _STRICT_SEMVER = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 
+# Pre-versioning files carry the hatch-vcs package version, e.g.
+# 0.1.dev66+g6f57c4d02 or 0.0.1.dev451+gde1568f (possibly with a .dYYYYMMDD suffix).
+_LEGACY_PACKAGE_VERSION = re.compile(r"0\.[01](\.\d+)?\.dev\d+(\+.*)?")
+
 
 def _parse_semver(version):
     """
@@ -540,19 +544,16 @@ def _parse_semver(version):
 
     Parameters
     ----------
-    version : object
+    version : str
         The value found in a file's ``schema_version`` field.
 
     Returns
     -------
     tuple of int or None
-        ``(major, minor, patch)``, or ``None`` if ``version`` is not a string
-        or has extra components, such as the package version
-        ``0.1.dev66+g6f57c4d02``. The caller decides whether ``None`` means
-        legacy or unsupported.
+        ``(major, minor, patch)``, or ``None`` if ``version`` has extra
+        components, such as the package version ``0.1.dev66+g6f57c4d02``. The
+        caller decides whether ``None`` means legacy or unsupported.
     """
-    if not isinstance(version, str):
-        return None
     match = _STRICT_SEMVER.fullmatch(version)
     return tuple(int(part) for part in match.groups()) if match else None
 
@@ -579,7 +580,8 @@ def _generation(version):
     ------
     UnsupportedSchemaVersionError
         If ``version`` is not a string, or is a string that is neither
-        ``X.Y.Z`` nor a pre-versioning ``0.`` package version.
+        ``X.Y.Z`` nor a pre-versioning package version such as
+        ``0.1.dev66+g6f57c4d02``.
     """
     if version is None:
         return "legacy"
@@ -589,8 +591,7 @@ def _generation(version):
         )
     parsed = _parse_semver(version)
     if parsed is None:
-        # Pre-versioning files carry the package version, e.g. 0.1.dev66+g6f57c4d02
-        if version.startswith("0."):
+        if _LEGACY_PACKAGE_VERSION.fullmatch(version):
             return "legacy"
         raise UnsupportedSchemaVersionError(
             f"Cannot interpret schema_version {version!r}; expected X.Y.Z"
@@ -615,9 +616,9 @@ class _Migration(NamedTuple):
     summary : str
         What changed, for the migration warning.
     """
-    target: str  # version the result conforms to
-    func: Callable[[dict], dict]  # frozen once released
-    summary: str  # what changed; goes into the warning
+    target: str
+    func: Callable[[dict], dict]
+    summary: str
 
 
 def _migrate_legacy_to_0_2(data):
@@ -663,20 +664,26 @@ def upgrade(data):
     -------
     dict
         ``data`` itself if it is already in the current generation, otherwise
-        an upgraded copy. The input is never modified.
+        an upgraded copy stamped with `SCHEMA_VERSION`. The input is never
+        modified.
 
     Raises
     ------
     NewerSchemaVersionError
         If the file was written against a newer schema than this reader.
     UnsupportedSchemaVersionError
-        If the version cannot be interpreted or has no migration path.
+        If the version is null, cannot be interpreted or has no migration
+        path.
 
     Warns
     -----
     SchemaMigrationWarning
         Once, if the data had to be migrated.
     """
+    # Only a missing field means legacy; an explicit null was never valid.
+    if "schema_version" in data and data["schema_version"] is None:
+        raise UnsupportedSchemaVersionError("schema_version is null")
+
     original = data.get("schema_version")
     generation = _generation(original)
     current_generation = _generation(SCHEMA_VERSION)
@@ -702,9 +709,10 @@ def upgrade(data):
     while generation != current_generation:
         step = _MIGRATIONS[generation]
         upgraded = step.func(upgraded)
-        upgraded["schema_version"] = step.target
         summaries.append(f"{step.target}: {step.summary}")
         generation = _generation(step.target)
+    # Now in the current generation, so the data conforms to the current version.
+    upgraded["schema_version"] = SCHEMA_VERSION
 
     was = "missing" if original is None else repr(original)
     warnings.warn(
@@ -748,38 +756,39 @@ class StarListSet(BaseModel, PrettyPrintMixin, GenerateInstanceFromExamplesMixin
         )
     ]
 
+    @model_validator(mode="before")
     @classmethod
-    def from_json(cls, text):
+    def _upgrade_older_versions(cls, data):
         """
-        Create a StarListSet from JSON text, upgrading older schema versions.
+        Upgrade raw data from an older schema version before validation.
+
+        This runs for ``model_validate``, ``model_validate_json`` and the
+        constructor, so every way of creating a `StarListSet` reads old files.
 
         Parameters
         ----------
-        text : str
-            JSON text of a starlist set.
+        data : object
+            The raw input to validation; only a dict is upgraded.
 
         Returns
         -------
-        StarListSet
-            An instance of the StarListSet class, at the current schema version.
+        object
+            ``data`` passed through `upgrade` if it is a dict, otherwise
+            ``data`` unchanged.
 
         Raises
         ------
         SchemaVersionError
-            If the file's schema version is newer than, or cannot be
-            migrated to, `SCHEMA_VERSION`.
-        pydantic.ValidationError
-            If the (upgraded) data does not match the schema.
+            If the data's schema version is newer than, or cannot be migrated
+            to, `SCHEMA_VERSION`. It is not wrapped in a
+            ``pydantic.ValidationError``.
 
         Warns
         -----
         SchemaMigrationWarning
-            If the file was written against an older schema and was upgraded.
+            If the data was written against an older schema and was upgraded.
         """
-        data = json.loads(text)
-        if isinstance(data, dict):
-            data = upgrade(data)
-        return cls.model_validate(data)
+        return upgrade(data) if isinstance(data, dict) else data
 
 
 def generate_starlist_schema():

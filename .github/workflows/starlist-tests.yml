@@ -42,8 +42,8 @@ jobs:
         run: uv run pytest
 
   schema-files:
-    # Guard against stale generated files and schema changes without a
-    # SCHEMA_VERSION bump. Only meaningful for PRs, where there is a base ref.
+    # Guard the archived schema versions. Only meaningful for PRs, where there
+    # is a base ref. Stale generated files are caught by pytest in the test job.
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     defaults:
@@ -54,23 +54,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-          python-version: "3.12"
-
-      - name: Install dependencies
-        run: uv sync --extra dev
-
-      - name: Check generated schema files are current
-        run: |
-          uv run poe generate
-          git diff --exit-code -- data/
-
       - name: Check archived schema files are unchanged
         # data/v<version>/ is the permanent record of each schema version. A PR
-        # may add an archive but never modify or delete one.
+        # may add an archive but never modify, delete or rename one
+        # (--diff-filter=a is every kind of change except an addition).
         run: |
           git fetch origin ${{ github.base_ref }}
-          git diff --exit-code --name-only --diff-filter=MD \
-            origin/${{ github.base_ref }}... -- 'data/v*/'
+          git diff --exit-code --name-only --diff-filter=a \
+            origin/${{ github.base_ref }}... -- 'data/v*'

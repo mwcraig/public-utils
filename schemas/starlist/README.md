@@ -74,7 +74,8 @@ schema itself changes.
 
 `schema_version` is a required field of a starlist file (`StarListSet`). There
 is no default: code that builds a `StarListSet` passes
-`schema_version=SCHEMA_VERSION` explicitly. The generated
+`schema_version=SCHEMA_VERSION` explicitly (data without one is treated as a
+legacy file and upgraded with a warning, see below). The generated
 `data/schema_definition.json` also states its own version in a top-level
 `version` key.
 
@@ -111,32 +112,45 @@ A change that crosses a generation boundary also needs:
 5. A migration function from the old generation to the new one, registered in
    `_MIGRATIONS` in `aavso_starlist_schema.py`. A migration takes and returns a
    plain dict and is never edited once released.
-6. A before/after fixture pair under `tests/data/migrations/<old>_to_<new>/`.
+6. A `before.json`/`after.json` pair of sample files under
+   `tests/data/migrations/<old generation>_to_<new generation>/`, e.g.
+   `legacy_to_0.2`, `0.2_to_0.3`, `0.9_to_1`.
+
+While the schema is `0.y.z`, every minor bump is a new generation, so even a new
+optional field (0.2 → 0.3) needs steps 5 and 6;
+`test_migration_chain_reaches_current_generation` fails without them. When no
+data has to change, `_migrate_legacy_to_0_2` is the template for a no-op
+migration.
 
 #### Reading starlist files
 
-Use `StarListSet.from_json(text)` instead of
-`StarListSet.model_validate_json(text)`. It parses the JSON, upgrades older
-files to the current schema version with `upgrade()`, then validates.
+Use the standard pydantic methods. `StarListSet.model_validate_json(text)`,
+`StarListSet.model_validate(data)` and the constructor all upgrade older data to
+the current schema version with `upgrade()` before validating.
 
 ```python
 from pathlib import Path
 
 from aavso_starlist_schema import StarListSet
 
-star_list_set = StarListSet.from_json(Path("starlists.json").read_text())
+star_list_set = StarListSet.model_validate_json(Path("starlists.json").read_text())
 ```
 
 `upgrade(data)` is also available directly: it takes the parsed dict and returns
-a dict at the current version (unchanged if already current; it does not modify
+a dict in the current generation, stamped with the current version if it had to
+be upgraded (unchanged if already in the current generation; it does not modify
 its input).
+
+A file from a newer version in the same generation is read normally; fields
+this version doesn't know are ignored.
 
 When a file is upgraded, a `SchemaMigrationWarning` is issued naming the
 original version, the new version and what changed. The upgraded object is
 derived data; the submitted file remains the record.
 
 Two errors are specific to versioning. Both derive from `SchemaVersionError`,
-which is deliberately not a `ValueError`:
+which is deliberately not a `ValueError`, so pydantic does not wrap them in a
+`ValidationError`:
 
 - `NewerSchemaVersionError`: the file was written against a newer schema than
   this version of the package understands. Upgrade the package.
