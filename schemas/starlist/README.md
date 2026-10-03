@@ -92,12 +92,19 @@ A *generation* is the set of mutually compatible versions: `0.2` for 0.2.z,
 `schema_version`, or package-version strings such as `0.0.1.dev451+gde1568f`).
 Crossing a generation boundary requires a migration.
 
+Every generation that has been left behind keeps a *frozen* copy of its models
+in its own module (`_aavso_starlist_legacy.py` for the legacy generation), so
+that an old file can still be validated against the schema it was written for.
+The live models in `aavso_starlist_schema.py` are always the current generation.
+
 Every schema version is archived unchanged under `data/v<version>/` (for
 example `data/v0.2.0/`). `data/schema_definition.*` is always the current
 schema; the archive is the record of what each version looked like. The tests
 require the current files to match the archive for `SCHEMA_VERSION`, so a
 schema change without a version bump fails `pytest`, and CI rejects a pull
-request that modifies or deletes an archived file.
+request that modifies or deletes an archived file. The tests also require each
+frozen model to generate exactly the archived schema of its generation
+(`data/legacy/` for the legacy models), which is what keeps it frozen.
 
 #### Changing the schema
 
@@ -107,17 +114,29 @@ request that modifies or deletes an archived file.
 3. Run `uv run poe archive` to copy them to `data/v<SCHEMA_VERSION>/`.
 4. Run `uv run pytest`.
 
-A change that crosses a generation boundary also needs:
+A change that crosses a generation boundary also needs the following. Do step
+5 first, before touching the live models:
 
-5. A migration function from the old generation to the new one, registered in
-   `_MIGRATIONS` in `aavso_starlist_schema.py`. A migration takes and returns a
-   plain dict and is never edited once released.
-6. A `before.json`/`after.json` pair of sample files under
+5. A frozen copy of the models of the generation being left, in a new module
+   named for it, e.g. `_aavso_starlist_v0_2.py` when leaving 0.2. Copy
+   `AAVSOFilters`, `StarItem`, `StarList` and `StarListSet` with their fields
+   only: no mixins, no methods, no validators that upgrade. Replace anything
+   computed from `SCHEMA_VERSION` (the `version` key and the `schema_version`
+   examples and pattern) with the literal value. The module must not import
+   from `aavso_starlist_schema`. `_aavso_starlist_legacy.py` is the example to
+   follow. `test_frozen_model_matches_its_archive` passes once the copy
+   generates the same schema as the newest archive of that generation.
+6. A migration function from the old generation to the new one, registered in
+   `_MIGRATIONS` in `aavso_starlist_schema.py` together with the frozen
+   `StarListSet` from step 5. A migration takes and returns a plain dict and
+   is never edited once released.
+7. A `before.json`/`after.json` pair of sample files under
    `tests/data/migrations/<old generation>_to_<new generation>/`, e.g.
-   `legacy_to_0.2`, `0.2_to_0.3`, `0.9_to_1`.
+   `legacy_to_0.2`, `0.2_to_0.3`, `0.9_to_1`. `before.json` must be valid for
+   the frozen model of the old generation and `after.json` for the new one.
 
 While the schema is `0.y.z`, every minor bump is a new generation, so even a new
-optional field (0.2 → 0.3) needs steps 5 and 6;
+optional field (0.2 → 0.3) needs steps 5 to 7;
 `test_migration_chain_reaches_current_generation` fails without them. When no
 data has to change, `_migrate_legacy_to_0_2` is the template for a no-op
 migration.
@@ -125,8 +144,16 @@ migration.
 #### Reading starlist files
 
 Use the standard pydantic methods. `StarListSet.model_validate_json(text)`,
-`StarListSet.model_validate(data)` and the constructor all upgrade older data to
-the current schema version with `upgrade()` before validating.
+`StarListSet.model_validate(data)` and the constructor all read older data. A
+file from an older generation goes through three steps:
+
+1. It is validated against the frozen model of its own generation: is this
+   file valid for the schema version it states?
+2. It is upgraded to the current schema version with `upgrade()`, as a plain
+   dict, one generation at a time. Nothing is validated between migrations.
+3. The result is validated against the current model.
+
+A file already in the current generation only gets step 3.
 
 ```python
 from pathlib import Path
@@ -136,10 +163,15 @@ from aavso_starlist_schema import StarListSet
 star_list_set = StarListSet.model_validate_json(Path("starlists.json").read_text())
 ```
 
-`upgrade(data)` is also available directly: it takes the parsed dict and returns
-a dict in the current generation, stamped with the current version if it had to
-be upgraded (unchanged if already in the current generation; it does not modify
-its input).
+The first two steps are also available on their own:
+
+- `validate_as_written(data)` takes the parsed dict and validates it against
+  the schema of its own generation, without upgrading. It returns the validated
+  model: a `StarListSet` for a current file, the frozen model for an older one.
+- `upgrade(data)` takes the parsed dict and returns a dict in the current
+  generation, stamped with the current version if it had to be upgraded
+  (unchanged if already in the current generation; it does not modify its
+  input). It does not validate.
 
 A file from a newer version in the same generation is read normally; fields
 this version doesn't know are ignored.
@@ -148,7 +180,10 @@ When a file is upgraded, a `SchemaMigrationWarning` is issued naming the
 original version, the new version and what changed. The upgraded object is
 derived data; the submitted file remains the record.
 
-Two errors are specific to versioning. Both derive from `SchemaVersionError`,
+A file that is not valid for the schema version it states fails step 1 with the
+usual pydantic `ValidationError`; that is a problem with the file.
+
+Three errors are specific to versioning. All derive from `SchemaVersionError`,
 which is deliberately not a `ValueError`, so pydantic does not wrap them in a
 `ValidationError`:
 
@@ -156,9 +191,9 @@ which is deliberately not a `ValueError`, so pydantic does not wrap them in a
   this version of the package understands. Upgrade the package.
 - `UnsupportedSchemaVersionError`: the version cannot be understood or there is
   no migration path from it.
-
-A legacy file whose contents do not match the schema still fails with the usual
-pydantic `ValidationError`.
+- `MigrationResultError`: the file was valid for its own version (step 1) but
+  the upgraded data was not valid (step 3). That is a bug in a migration in
+  this package, not a problem with the file.
 
 ## Development
 

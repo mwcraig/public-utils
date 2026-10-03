@@ -5,17 +5,22 @@ import warnings
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
+import _aavso_starlist_legacy
 from aavso_starlist_schema import (
     _MIGRATIONS,
     SCHEMA_VERSION,
+    MigrationResultError,
     NewerSchemaVersionError,
     SchemaMigrationWarning,
     StarListSet,
     UnsupportedSchemaVersionError,
     _generation,
+    _Migration,
     _parse_semver,
     upgrade,
+    validate_as_written,
 )
 
 # One directory per migration step, named <old generation>_to_<new generation>,
@@ -102,6 +107,17 @@ def test_each_migration_step_matches_its_before_after_pair(generation):
     result["schema_version"] = step.target
 
     assert result == after
+
+
+@pytest.mark.parametrize("generation", sorted(_MIGRATIONS))
+def test_before_and_after_files_are_valid_for_their_own_generation(generation):
+    # A migration must be tested against data that really conforms to the
+    # schemas on both sides of it: before.json to the frozen model of the
+    # generation being left, after.json to the model of the generation reached.
+    before, after = _before_after_pair(generation)
+
+    assert isinstance(validate_as_written(before), _MIGRATIONS[generation].model)
+    validate_as_written(after)
 
 
 @pytest.mark.parametrize("generation", sorted(_MIGRATIONS))
@@ -251,3 +267,64 @@ def test_model_raises_version_errors_unwrapped(next_generation_version):
         )
     with pytest.raises(UnsupportedSchemaVersionError):
         StarListSet(schema_version="banana", star_lists=[])
+
+
+def test_validate_as_written_uses_the_model_of_the_files_own_generation():
+    # A legacy file is checked against the frozen legacy model and a current
+    # file against the live model; neither is upgraded, so nothing warns.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        legacy = validate_as_written(_legacy_data("0.1.dev66+g6f57c4d02"))
+        current = validate_as_written(_example_data())
+
+    assert isinstance(legacy, _aavso_starlist_legacy.StarListSet)
+    assert legacy.schema_version == "0.1.dev66+g6f57c4d02"
+    assert isinstance(current, StarListSet)
+
+
+def test_file_invalid_as_written_is_a_validation_error():
+    # A legacy file that does not match the legacy schema is the file's
+    # problem: an ordinary ValidationError, raised before any upgrade.
+    data = _legacy_data(None)
+    data["star_lists"] = [{"observer": "a star list missing its other fields"}]
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with pytest.raises(ValidationError):
+            validate_as_written(data)
+        with pytest.raises(ValidationError):
+            StarListSet.model_validate(data)
+
+
+def test_invalid_migration_result_is_a_distinct_error(monkeypatch):
+    # A file valid as written whose upgraded form is invalid means a migration
+    # is wrong. That is reported as MigrationResultError, not as a
+    # ValidationError blaming the file.
+    def _broken_migration(data):
+        """
+        Stand in for a buggy migration by dropping a required field.
+
+        Parameters
+        ----------
+        data : dict
+            Raw starlist-set data.
+
+        Returns
+        -------
+        dict
+            ``data`` without its ``star_lists``.
+        """
+        del data["star_lists"]
+        return data
+
+    broken = _Migration(
+        _aavso_starlist_legacy.StarListSet, "0.2.0", _broken_migration, "broken"
+    )
+    monkeypatch.setitem(_MIGRATIONS, "legacy", broken)
+
+    with pytest.warns(SchemaMigrationWarning):
+        with pytest.raises(MigrationResultError) as excinfo:
+            StarListSet.model_validate(_legacy_data(None))
+
+    assert not isinstance(excinfo.value, ValueError)
+    assert isinstance(excinfo.value.__cause__, ValidationError)

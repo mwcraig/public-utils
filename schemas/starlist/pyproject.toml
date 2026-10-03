@@ -56,7 +56,7 @@ raw-options = { search_parent_directories = true, git_describe_command = [
 version-file = "_aavso_version.py"
 
 [tool.hatch.build.targets.wheel]
-include = ["aavso_starlist_schema.py", "_aavso_version.py", "data/**"]
+include = ["aavso_starlist_schema.py", "_aavso_starlist_*.py", "_aavso_version.py", "data/**"]
 
 [tool.poe.tasks]
 gen-json.cmd = "aavso-starlist-schema data/schema_definition"
