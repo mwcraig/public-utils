@@ -97,7 +97,7 @@ def _before_after_pair(generation):
     )
 
 
-@pytest.mark.parametrize("generation", sorted(_MIGRATIONS))
+@pytest.mark.parametrize("generation", _MIGRATIONS)
 def test_each_migration_step_matches_its_before_after_pair(generation):
     # Every migration needs a before/after pair; a missing directory fails here.
     before, after = _before_after_pair(generation)
@@ -109,7 +109,7 @@ def test_each_migration_step_matches_its_before_after_pair(generation):
     assert result == after
 
 
-@pytest.mark.parametrize("generation", sorted(_MIGRATIONS))
+@pytest.mark.parametrize("generation", _MIGRATIONS)
 def test_before_and_after_files_are_valid_for_their_own_generation(generation):
     # A migration must be tested against data that really conforms to the
     # schemas on both sides of it: before.json to the frozen model of the
@@ -120,7 +120,7 @@ def test_before_and_after_files_are_valid_for_their_own_generation(generation):
     validate_as_written(after)
 
 
-@pytest.mark.parametrize("generation", sorted(_MIGRATIONS))
+@pytest.mark.parametrize("generation", _MIGRATIONS)
 def test_before_files_upgrade_to_a_valid_current_file(generation):
     # Old files must stay readable however many generations later.
     before, _ = _before_after_pair(generation)
@@ -156,12 +156,12 @@ def test_current_version_is_returned_unchanged_without_warning():
         assert upgrade(data) is data
 
 
-def test_upgraded_file_is_stamped_with_a_later_patch_version(monkeypatch):
+def test_upgraded_file_is_stamped_with_a_later_patch_version(mocker):
     # After a patch bump the last migration target is older than SCHEMA_VERSION;
     # an upgraded file must still come out at the current version.
     major, minor, patch = SCHEMA_VERSION.split(".")
     patched = f"{major}.{minor}.{int(patch) + 1}"
-    monkeypatch.setattr("aavso_starlist_schema.SCHEMA_VERSION", patched)
+    mocker.patch("aavso_starlist_schema.SCHEMA_VERSION", patched)
 
     with pytest.warns(SchemaMigrationWarning, match=re.escape(patched)):
         result = upgrade(_legacy_data(None))
@@ -170,16 +170,19 @@ def test_upgraded_file_is_stamped_with_a_later_patch_version(monkeypatch):
 
 
 def test_newer_version_raises(next_generation_version):
-    # A version from a later generation is an error telling the user to upgrade
-    # the package, not a validation error.
-    for version in ["9.0.0", next_generation_version]:
+    # Any version newer than the current one, even a patch bump in the same
+    # generation, is an error telling the user to upgrade the package, not a
+    # validation error: this reader would silently drop the newer fields.
+    major, minor, patch = SCHEMA_VERSION.split(".")
+    next_patch = f"{major}.{minor}.{int(patch) + 1}"
+    for version in ["9.0.0", next_generation_version, next_patch]:
         with pytest.raises(NewerSchemaVersionError, match=re.escape(version)):
             upgrade(_example_data(schema_version=version))
 
 
 @pytest.mark.parametrize(
     "version",
-    ["banana", 2, ["0.2.0"], "1.2", None, "0.", "0.banana", "0.3.0rc1", "0.3.0.dev1"],
+    ["banana", 2, ["0.2.0"], "1.2", None, "0.3.0rc1", "0.3.0.dev1"],
 )
 def test_unsupported_versions_raise(version):
     # Non-strings, an explicit null, and strings that are neither X.Y.Z nor a
@@ -258,6 +261,14 @@ def test_model_validate_and_constructor_upgrade_legacy_data():
         assert StarListSet(star_lists=[]).schema_version == SCHEMA_VERSION
 
 
+def test_model_rejects_newer_version_in_current_generation():
+    # The model does not read a newer file of its own generation and ignore
+    # the fields it does not know.
+    major, minor, patch = SCHEMA_VERSION.split(".")
+    with pytest.raises(NewerSchemaVersionError):
+        StarListSet(schema_version=f"{major}.{minor}.{int(patch) + 1}", star_lists=[])
+
+
 def test_model_raises_version_errors_unwrapped(next_generation_version):
     # Version problems surface from the model as SchemaVersionErrors, not
     # wrapped in a pydantic ValidationError.
@@ -282,6 +293,21 @@ def test_validate_as_written_uses_the_model_of_the_files_own_generation():
     assert isinstance(current, StarListSet)
 
 
+def test_version_that_was_never_released_raises(mocker):
+    # A version at or below the current one that has no archive under data/
+    # was never released, so no file can legitimately carry it. Simulate two
+    # patch bumps where the first was skipped.
+    major, minor, patch = (int(part) for part in SCHEMA_VERSION.split("."))
+    skipped = f"{major}.{minor}.{patch + 1}"
+    mocker.patch("aavso_starlist_schema.SCHEMA_VERSION", f"{major}.{minor}.{patch + 2}")
+
+    with pytest.raises(UnsupportedSchemaVersionError, match="never released"):
+        StarListSet.model_validate({"schema_version": skipped, "star_lists": []})
+
+    # The archived version is still read.
+    StarListSet.model_validate({"schema_version": SCHEMA_VERSION, "star_lists": []})
+
+
 def test_file_invalid_as_written_is_a_validation_error():
     # A legacy file that does not match the legacy schema is the file's
     # problem: an ordinary ValidationError, raised before any upgrade.
@@ -296,7 +322,7 @@ def test_file_invalid_as_written_is_a_validation_error():
             StarListSet.model_validate(data)
 
 
-def test_invalid_migration_result_is_a_distinct_error(monkeypatch):
+def test_invalid_migration_result_is_a_distinct_error(mocker):
     # A file valid as written whose upgraded form is invalid means a migration
     # is wrong. That is reported as MigrationResultError, not as a
     # ValidationError blaming the file.
@@ -318,9 +344,9 @@ def test_invalid_migration_result_is_a_distinct_error(monkeypatch):
         return data
 
     broken = _Migration(
-        _aavso_starlist_legacy.StarListSet, "0.2.0", _broken_migration, "broken"
+        _aavso_starlist_legacy.StarListSet, SCHEMA_VERSION, _broken_migration, "broken"
     )
-    monkeypatch.setitem(_MIGRATIONS, "legacy", broken)
+    mocker.patch.dict(_MIGRATIONS, {"legacy": broken})
 
     with pytest.warns(SchemaMigrationWarning):
         with pytest.raises(MigrationResultError) as excinfo:

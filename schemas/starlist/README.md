@@ -173,8 +173,10 @@ The first two steps are also available on their own:
   (unchanged if already in the current generation; it does not modify its
   input). It does not validate.
 
-A file from a newer version in the same generation is read normally; fields
-this version doesn't know are ignored.
+A file from any newer version, even one in the same generation, is refused
+with `NewerSchemaVersionError`: this version would silently drop the fields
+added since. The `schema_version` pattern in the generated schema lists exactly
+the versions that are read without upgrading.
 
 When a file is upgraded, a `SchemaMigrationWarning` is issued naming the
 original version, the new version and what changed. The upgraded object is
@@ -189,8 +191,9 @@ which is deliberately not a `ValueError`, so pydantic does not wrap them in a
 
 - `NewerSchemaVersionError`: the file was written against a newer schema than
   this version of the package understands. Upgrade the package.
-- `UnsupportedSchemaVersionError`: the version cannot be understood or there is
-  no migration path from it.
+- `UnsupportedSchemaVersionError`: the version cannot be understood, was never
+  released (it is not newer than this package's version and has no archive
+  under `data/v<version>/`), or there is no migration path from it.
 - `MigrationResultError`: the file was valid for its own version (step 1) but
   the upgraded data was not valid (step 3). That is a bug in a migration in
   this package, not a problem with the file.
@@ -199,14 +202,15 @@ which is deliberately not a `ValueError`, so pydantic does not wrap them in a
 
 This project uses [uv](https://docs.astral.sh/uv/) and is versioned from git
 tags via `hatch-vcs`. Project tasks are defined with
-[poethepoet](https://poethepoet.natn.io/) in `pyproject.toml`.
+[poethepoet](https://poethepoet.natn.io/) in `pyproject.toml`. Run these
+commands from `schemas/starlist`:
 
 ```bash
 uv sync --extra dev      # create the environment and lockfile
 uv run pytest            # run the tests
 uv run poe               # list the available tasks
 uv run poe generate      # regenerate the reference schema files under data/
-uv run pre-commit install  # install the git hook (once per clone)
+uv run pre-commit install # install the git pre-commit hook (once per clone)
 ```
 
 The repo-level `.pre-commit-config.yaml` runs `poe generate` whenever the schema

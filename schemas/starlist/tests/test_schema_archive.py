@@ -13,7 +13,13 @@ import json
 
 import pytest
 
-from aavso_starlist_schema import _MIGRATIONS, DATA_DIR, SCHEMA_VERSION, _generation
+from aavso_starlist_schema import (
+    _MIGRATIONS,
+    DATA_DIR,
+    SCHEMA_VERSION,
+    _generation,
+    _parse_semver,
+)
 
 REFERENCE_FILES = ("schema_definition.json", "schema_definition.md")
 
@@ -32,7 +38,8 @@ def archived_versions():
     found = []
     for directory in DATA_DIR.glob("v*"):
         if directory.is_dir():
-            version = tuple(int(part) for part in directory.name[1:].split("."))
+            version = _parse_semver(directory.name[1:])
+            assert version is not None, f"data/{directory.name} is not named v<X.Y.Z>"
             found.append((version, directory))
     return sorted(found)
 
@@ -65,8 +72,8 @@ def test_archives_are_complete_and_state_their_version():
 def test_current_version_is_the_newest_archived():
     # Guards against lowering SCHEMA_VERSION, or forgetting to bump it past an
     # archive that already exists.
-    newest = archived_versions()[-1][1].name[1:]
-    assert newest == SCHEMA_VERSION
+    newest, _ = max(archived_versions())
+    assert newest == _parse_semver(SCHEMA_VERSION)
 
 
 def _generation_archive(generation):
@@ -87,15 +94,15 @@ def _generation_archive(generation):
     """
     if generation == "legacy":
         return DATA_DIR / "legacy" / "schema_definition.json"
-    directories = [
-        directory
-        for _, directory in archived_versions()
+    _, directory = max(
+        (version, directory)
+        for version, directory in archived_versions()
         if _generation(directory.name[1:]) == generation
-    ]
-    return directories[-1] / "schema_definition.json"
+    )
+    return directory / "schema_definition.json"
 
 
-@pytest.mark.parametrize("generation", sorted(_MIGRATIONS))
+@pytest.mark.parametrize("generation", _MIGRATIONS)
 def test_frozen_model_matches_its_archive(generation):
     # The frozen model of a generation must generate exactly the archived
     # schema of that generation. This is what keeps a frozen model frozen: any

@@ -1,5 +1,8 @@
-# Repo-wide pre-commit configuration. Install once per clone with:
-#   uv run --directory schemas/starlist --extra dev pre-commit install
+# pre-commit reads its configuration only from the root of the git repository,
+# so this file lives here. Its only hook belongs to the starlist schema package
+# (schemas/starlist/) and runs only when that package's schema module or
+# reference files are committed. Install once per clone, from schemas/starlist:
+#   uv run pre-commit install
 repos:
   - repo: local
     hooks:

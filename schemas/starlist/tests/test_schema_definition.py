@@ -71,31 +71,27 @@ def test_schema_version_is_embedded():
     assert "default" not in schema["properties"]["schema_version"]
 
 
-def test_schema_pattern_rejects_versions_outside_current_generation(
+def test_schema_pattern_admits_only_released_versions_of_current_generation(
     next_generation_version,
 ):
-    # The schema_version pattern in the generated schema admits only the
-    # current generation, so other tools validating a file against the schema
-    # reject anything else. (The model itself upgrades or raises a
-    # SchemaVersionError before the pattern is reached; see test_migration.py.)
+    # The schema_version pattern in the generated schema admits only released
+    # versions of the current generation, up to the current version, so other
+    # tools validating a file against the schema reject what the model rejects.
+    # (The model itself upgrades or raises a SchemaVersionError before the
+    # pattern is reached; see test_migration.py.)
     schema = json.loads(generate_star_list_set_schema())
     pattern = schema["properties"]["schema_version"]["pattern"]
+    major, minor, patch = SCHEMA_VERSION.split(".")
 
     assert re.search(pattern, SCHEMA_VERSION)
     for bad_version in [
         "banana",
         "0.0.1.dev451+gde1568f",  # legacy dev string
         "0.1.0",  # before versioning began
+        f"{major}.{minor}.{int(patch) + 1}",  # newer, same generation
         next_generation_version,
     ]:
         assert not re.search(pattern, bad_version)
-
-
-def test_model_accepts_patch_versions_of_current_generation():
-    # A higher patch version in the same generation is compatible and accepted
-    # directly, without upgrade().
-    major, minor, patch = SCHEMA_VERSION.split(".")
-    StarListSet(schema_version=f"{major}.{minor}.{int(patch) + 1}", star_lists=[])
 
 
 def test_make_star_list_from_table_of_items():
@@ -230,12 +226,12 @@ def test_main_writes_markdown(tmp_path):
 
 
 @pytest.mark.parametrize("markdown_flag, suffix", [([], ".json"), (["--markdown"], ".md")])
-def test_cli_writes_file(tmp_path, monkeypatch, markdown_flag, suffix):
+def test_cli_writes_file(tmp_path, mocker, markdown_flag, suffix):
     # The console-script entry point parses argv and writes the requested format.
     # Fire binds a value following a bool flag to that flag, so the positional
     # filename comes first and --markdown is a trailing standalone flag.
     out = tmp_path / "from_cli"
-    monkeypatch.setattr("sys.argv", ["aavso-starlist-schema", str(out), *markdown_flag])
+    mocker.patch("sys.argv", ["aavso-starlist-schema", str(out), *markdown_flag])
 
     cli()
 

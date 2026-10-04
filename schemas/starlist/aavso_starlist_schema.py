@@ -487,31 +487,6 @@ class StarList(BaseModel, PrettyPrintMixin, GenerateInstanceFromExamplesMixin):
         return Table(table_dict, meta=table_meta)
 
 
-def _version_pattern(version):
-    """
-    Build a regex matching every version in the same generation as ``version``.
-
-    Used as the ``pattern`` of the ``schema_version`` field, so the model
-    accepts only its own generation and everything else must go through
-    `upgrade`.
-
-    Parameters
-    ----------
-    version : str
-        A strict ``X.Y.Z`` version, normally `SCHEMA_VERSION`.
-
-    Returns
-    -------
-    str
-        Anchored regex. For ``0.y.z`` it matches the same minor only; for
-        ``x.y.z`` with ``x >= 1`` it matches the same major.
-    """
-    major, minor, _ = version.split(".")
-    if major == "0":
-        return rf"^0\.{minor}\.\d+$"
-    return rf"^{major}\.\d+\.\d+$"
-
-
 class SchemaVersionError(Exception):
     """
     Base class for problems with the schema version of a starlist file.
@@ -673,6 +648,46 @@ _MIGRATIONS = {
 }
 
 
+def _released_versions():
+    """
+    List the schema versions that have been released.
+
+    Returns
+    -------
+    set of tuple of int
+        ``(major, minor, patch)`` of every version archived under
+        ``data/v<version>/``, plus ``SCHEMA_VERSION`` itself.
+    """
+    archived = {
+        _parse_semver(directory.name[1:])
+        for directory in DATA_DIR.glob("v*")
+        if directory.is_dir()
+    }
+    return archived | {_parse_semver(SCHEMA_VERSION)}
+
+
+def _version_pattern():
+    """
+    Build a regex matching the versions the current model accepts.
+
+    Used as the ``pattern`` of the ``schema_version`` field, so the generated
+    schema admits exactly the versions this reader takes without upgrading:
+    the released versions of the current generation, up to `SCHEMA_VERSION`.
+
+    Returns
+    -------
+    str
+        Anchored regex listing each version, e.g. ``^(0\\.2\\.0|0\\.2\\.1)$``.
+    """
+    current_generation = _generation(SCHEMA_VERSION)
+    versions = [
+        ".".join(str(part) for part in version)
+        for version in sorted(_released_versions())
+        if _generation(".".join(str(part) for part in version)) == current_generation
+    ]
+    return "^(" + "|".join(re.escape(version) for version in versions) + ")$"
+
+
 def _supported_generation(data):
     """
     Determine the generation of raw starlist-set data, if this reader handles it.
@@ -692,8 +707,8 @@ def _supported_generation(data):
     NewerSchemaVersionError
         If the file was written against a newer schema than this reader.
     UnsupportedSchemaVersionError
-        If the version is null, cannot be interpreted or has no migration
-        path.
+        If the version is null, cannot be interpreted, was never released
+        or has no migration path.
     """
     # Only a missing field means legacy; an explicit null was never valid.
     if "schema_version" in data and data["schema_version"] is None:
@@ -701,16 +716,25 @@ def _supported_generation(data):
 
     original = data.get("schema_version")
     generation = _generation(original)
-    if generation == _generation(SCHEMA_VERSION) or generation in _MIGRATIONS:
-        return generation
-
-    parsed, supported = _parse_semver(original), _parse_semver(SCHEMA_VERSION)
+    supported = _parse_semver(SCHEMA_VERSION)
+    parsed = None if generation == "legacy" else _parse_semver(original)
+    # Any newer version is refused, even in the current generation: this reader
+    # would silently drop the fields added since.
     if parsed is not None and parsed > supported:
         raise NewerSchemaVersionError(
             f"File has schema_version {original!r}, newer than the "
             f"{SCHEMA_VERSION!r} this reader supports; upgrade the "
             "aavso-starlist-schema package."
         )
+    # A version up to the current one must be one that was actually released.
+    if parsed is not None and parsed not in _released_versions():
+        raise UnsupportedSchemaVersionError(
+            f"File has schema_version {original!r}, which was never released; "
+            "see the archived versions under data/."
+        )
+    if generation == _generation(SCHEMA_VERSION) or generation in _MIGRATIONS:
+        return generation
+
     raise UnsupportedSchemaVersionError(
         f"File has schema_version {original!r}, for which there is no "
         f"migration to the {SCHEMA_VERSION!r} this reader supports."
@@ -743,8 +767,8 @@ def validate_as_written(data):
     NewerSchemaVersionError
         If the file was written against a newer schema than this reader.
     UnsupportedSchemaVersionError
-        If the version is null, cannot be interpreted or has no migration
-        path.
+        If the version is null, cannot be interpreted, was never released
+        or has no migration path.
     """
     generation = _supported_generation(data)
     if generation in _MIGRATIONS:
@@ -776,8 +800,8 @@ def upgrade(data):
     NewerSchemaVersionError
         If the file was written against a newer schema than this reader.
     UnsupportedSchemaVersionError
-        If the version is null, cannot be interpreted or has no migration
-        path.
+        If the version is null, cannot be interpreted, was never released
+        or has no migration path.
 
     Warns
     -----
@@ -825,12 +849,12 @@ class StarListSet(BaseModel, PrettyPrintMixin, GenerateInstanceFromExamplesMixin
         Field(
             title="Starlist Schema Version",
             description=(
-                "Required. The version of this schema that the file was written "
+                "The version of this schema that the file was written "
                 "against, assigned by AAVSO"
             ),
             json_schema_extra=dict(unit="none"),
             examples=[SCHEMA_VERSION],
-            pattern=_version_pattern(SCHEMA_VERSION),
+            pattern=_version_pattern(),
         )
     ]
     star_lists: Annotated[
@@ -893,6 +917,7 @@ class StarListSet(BaseModel, PrettyPrintMixin, GenerateInstanceFromExamplesMixin
             return handler(data)
         generation = _supported_generation(data)
         if generation not in _MIGRATIONS:
+            # Already in the current generation: ordinary validation.
             return handler(data)
 
         _MIGRATIONS[generation].model.model_validate(data)

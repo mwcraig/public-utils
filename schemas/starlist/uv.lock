@@ -18,11 +18,13 @@ dev = [
     { name = "pre-commit" },
     { name = "pytest" },
     { name = "pytest-astropy" },
+    { name = "pytest-mock" },
     { name = "ruff" },
 ]
 test = [
     { name = "pytest" },
     { name = "pytest-astropy" },
+    { name = "pytest-mock" },
 ]
 
 [package.metadata]
@@ -37,6 +39,8 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'test'" },
     { name = "pytest-astropy", marker = "extra == 'dev'" },
     { name = "pytest-astropy", marker = "extra == 'test'" },
+    { name = "pytest-mock", marker = "extra == 'dev'" },
+    { name = "pytest-mock", marker = "extra == 'test'" },
     { name = "ruff", marker = "extra == 'dev'" },
 ]
 provides-extras = ["dev", "test"]
