@@ -87,9 +87,12 @@ legacy file and upgraded with a warning, see below). The generated
 | New optional field | minor | minor |
 | New required field, removal, changed meaning | major | minor |
 
-A *generation* is the set of mutually compatible versions: `0.2` for 0.2.z,
-`1` for 1.y.z, and `legacy` for everything before 0.2.0 (files with no
-`schema_version`, or package-version strings such as `0.0.1.dev451+gde1568f`).
+A *generation* is a set of versions that need no migration between them: a
+reader reads any released version of its own generation up to its own version,
+and refuses newer ones. The generations are `0.2` for 0.2.z, `1` for 1.y.z, and
+`legacy` for everything before 0.2.0 (files with no `schema_version`,
+package-version strings such as `0.0.1.dev451+gde1568f`, or a version below
+0.2.0 such as `0.0.1`).
 Crossing a generation boundary requires a migration.
 
 Every generation that has been left behind keeps a *frozen* copy of its models
@@ -169,13 +172,15 @@ The first two steps are also available on their own:
   the schema of its own generation, without upgrading. It returns the validated
   model: a `StarListSet` for a current file, the frozen model for an older one.
 - `upgrade(data)` takes the parsed dict and returns a dict in the current
-  generation, stamped with the current version if it had to be upgraded
-  (unchanged if already in the current generation; it does not modify its
-  input). It does not validate.
+  generation, stamped with the current version (unchanged if already at the
+  current version; it does not modify its input). It does not validate.
+
+A file from an older version of the current generation needs no migration; it
+is read without a warning, and the object states the current version.
 
 A file from any newer version, even one in the same generation, is refused
-with `NewerSchemaVersionError`: this version would silently drop the fields
-added since. The `schema_version` pattern in the generated schema lists exactly
+with `NewerSchemaVersionError`: this version cannot know what changed, and from
+1.x a newer minor version may add fields it would silently drop. The `schema_version` pattern in the generated schema lists exactly
 the versions that are read without upgrading.
 
 When a file is upgraded, a `SchemaMigrationWarning` is issued naming the
@@ -192,8 +197,9 @@ which is deliberately not a `ValueError`, so pydantic does not wrap them in a
 - `NewerSchemaVersionError`: the file was written against a newer schema than
   this version of the package understands. Upgrade the package.
 - `UnsupportedSchemaVersionError`: the version cannot be understood, was never
-  released (it is not newer than this package's version and has no archive
-  under `data/v<version>/`), or there is no migration path from it.
+  released (it is 0.2.0 or later, not newer than this package's version, and
+  has no archive under `data/v<version>/`), or there is no migration path from
+  it.
 - `MigrationResultError`: the file was valid for its own version (step 1) but
   the upgraded data was not valid (step 3). That is a bug in a migration in
   this package, not a problem with the file.

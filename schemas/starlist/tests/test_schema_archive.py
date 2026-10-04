@@ -17,6 +17,8 @@ from aavso_starlist_schema import (
     _MIGRATIONS,
     DATA_DIR,
     SCHEMA_VERSION,
+    StarListSet,
+    _archived_versions,
     _generation,
     _parse_semver,
 )
@@ -111,3 +113,33 @@ def test_frozen_model_matches_its_archive(generation):
     generated = json.dumps(frozen.model_json_schema(), indent=2)
 
     assert generated == _generation_archive(generation).read_text()
+
+
+def test_misnamed_archive_directory_does_not_break_the_reader(tmp_path, mocker):
+    # A data/v* directory that is not named v<X.Y.Z> is ignored by the reader
+    # rather than breaking the import; archived_versions() above reports it.
+    (tmp_path / "v0.2.0").mkdir()
+    (tmp_path / "vtmp").mkdir()
+    mocker.patch("aavso_starlist_schema.DATA_DIR", tmp_path)
+
+    assert _archived_versions() == {(0, 2, 0)}
+
+
+@pytest.mark.parametrize(
+    "directory",
+    [
+        directory
+        for _, directory in archived_versions()
+        if _generation(directory.name[1:]) == _generation(SCHEMA_VERSION)
+    ],
+    ids=lambda directory: directory.name,
+)
+def test_archived_version_of_current_generation_is_read_as_current(directory):
+    # Every released version of the current generation is read without
+    # migration, and the object states the current version, so a file written
+    # from it is labelled with the schema it conforms to.
+    star_list_set = StarListSet.model_validate(
+        {"schema_version": directory.name[1:], "star_lists": []}
+    )
+
+    assert star_list_set.schema_version == SCHEMA_VERSION

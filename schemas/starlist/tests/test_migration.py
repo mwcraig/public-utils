@@ -27,7 +27,15 @@ from aavso_starlist_schema import (
 # holding a before.json / after.json pair.
 MIGRATION_DATA = Path(__file__).parent / "data" / "migrations"
 
-LEGACY_VERSIONS = [None, "0.0.1.dev451+gde1568f", "0.1.dev66+g6f57c4d02", "0.0.0", "0.1.0"]
+# "0.0.1" was the example value in the legacy schema, so files may carry it.
+LEGACY_VERSIONS = [
+    None,
+    "0.0.1.dev451+gde1568f",
+    "0.1.dev66+g6f57c4d02",
+    "0.0.0",
+    "0.0.1",
+    "0.1.0",
+]
 
 
 def _example_data(**overrides):
@@ -161,18 +169,37 @@ def test_upgraded_file_is_stamped_with_a_later_patch_version(mocker):
     # an upgraded file must still come out at the current version.
     major, minor, patch = SCHEMA_VERSION.split(".")
     patched = f"{major}.{minor}.{int(patch) + 1}"
+    legacy = _legacy_data(None)  # built before patching: it goes through the model
     mocker.patch("aavso_starlist_schema.SCHEMA_VERSION", patched)
 
     with pytest.warns(SchemaMigrationWarning, match=re.escape(patched)):
-        result = upgrade(_legacy_data(None))
+        result = upgrade(legacy)
 
     assert result["schema_version"] == patched
+
+
+def test_older_version_of_current_generation_is_restamped(mocker):
+    # A file from an older version of the current generation needs no
+    # migration, but comes out stating the current version, silently and
+    # without the input being modified. Simulate a patch bump.
+    major, minor, patch = SCHEMA_VERSION.split(".")
+    patched = f"{major}.{minor}.{int(patch) + 1}"
+    data = {"schema_version": SCHEMA_VERSION, "star_lists": []}
+    mocker.patch("aavso_starlist_schema.SCHEMA_VERSION", patched)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        result = upgrade(data)
+
+    assert result == {"schema_version": patched, "star_lists": []}
+    assert data["schema_version"] == SCHEMA_VERSION
 
 
 def test_newer_version_raises(next_generation_version):
     # Any version newer than the current one, even a patch bump in the same
     # generation, is an error telling the user to upgrade the package, not a
-    # validation error: this reader would silently drop the newer fields.
+    # validation error: this reader cannot know what changed, and from 1.x a
+    # newer minor may add fields it would silently drop.
     major, minor, patch = SCHEMA_VERSION.split(".")
     next_patch = f"{major}.{minor}.{int(patch) + 1}"
     for version in ["9.0.0", next_generation_version, next_patch]:
@@ -182,7 +209,19 @@ def test_newer_version_raises(next_generation_version):
 
 @pytest.mark.parametrize(
     "version",
-    ["banana", 2, ["0.2.0"], "1.2", None, "0.3.0rc1", "0.3.0.dev1"],
+    [
+        "banana",
+        2,
+        ["0.2.0"],
+        "1.2",
+        None,
+        "0.3.0rc1",
+        "0.3.0.dev1",
+        # Leading zeros: not a second spelling of a version.
+        "0.2.00",
+        "00.2.0",
+        "0.01.0",
+    ],
 )
 def test_unsupported_versions_raise(version):
     # Non-strings, an explicit null, and strings that are neither X.Y.Z nor a
@@ -304,8 +343,8 @@ def test_version_that_was_never_released_raises(mocker):
     with pytest.raises(UnsupportedSchemaVersionError, match="never released"):
         StarListSet.model_validate({"schema_version": skipped, "star_lists": []})
 
-    # The archived version is still read.
-    StarListSet.model_validate({"schema_version": SCHEMA_VERSION, "star_lists": []})
+    # The archived version is still accepted by the version check.
+    upgrade({"schema_version": SCHEMA_VERSION, "star_lists": []})
 
 
 def test_file_invalid_as_written_is_a_validation_error():

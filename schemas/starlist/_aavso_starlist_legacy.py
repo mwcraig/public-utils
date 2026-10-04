@@ -13,9 +13,10 @@ This module is frozen:
 - Do not import anything from ``aavso_starlist_schema``. A frozen model that
   shares code with the live models changes whenever they do.
 
-One deliberate difference from the original: there, ``schema_version``
-defaulted to the version of the installed package, which a frozen model cannot
-reproduce. Here it is optional and defaults to ``None``.
+In the original, ``schema_version`` defaulted to the version of the installed
+package, which differed in every build. Here the default is frozen at the value
+in the last legacy schema file committed to the repository, so the schema these
+models generate is identical to that file.
 """
 
 from enum import StrEnum
@@ -26,14 +27,9 @@ from pydantic import BaseModel, Field
 __all__ = ["AAVSOFilters", "StarItem", "StarList", "StarListSet"]
 
 
+# No docstring: it would become a schema description that the legacy schema
+# did not have.
 class AAVSOFilters(StrEnum):
-    """
-    Photometric filters a smart telescope may report.
-
-    Values are AAVSO filter names. The list is restricted to the filters
-    such telescopes actually use so that typos and unknown codes are
-    rejected by the schema.
-    """
     TG = "TG"
     TR = "TR"
     TB = "TB"
@@ -352,14 +348,15 @@ class StarListSet(BaseModel):
     Class to hold a list for which each entry is a star list.
     """
     schema_version: Annotated[
-        str | None,
+        str,
         Field(
             title="Starlist Schema Version",
             description="An AAVSO-assigned string that identifies the schema version",
             json_schema_extra=dict(unit="none"),
             examples=["0.0.1"],
+            default="0.1.dev63+g61de51202.d20260609",
         )
-    ] = None
+    ]
     star_lists: Annotated[
         list[StarList],
         Field(

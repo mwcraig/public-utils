@@ -503,7 +503,7 @@ class NewerSchemaVersionError(SchemaVersionError):
 
 
 class UnsupportedSchemaVersionError(SchemaVersionError):
-    """The schema version is unparseable, or there is no migration path from it."""
+    """The schema version is null, unparseable or never released, or has no migration path."""
 
 
 class MigrationResultError(SchemaVersionError):
@@ -522,7 +522,8 @@ class SchemaMigrationWarning(UserWarning):
     """A starlist file was written against an older schema and was upgraded."""
 
 
-_STRICT_SEMVER = re.compile(r"(\d+)\.(\d+)\.(\d+)")
+# No leading zeros, so each version has exactly one spelling.
+_STRICT_SEMVER = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")
 
 # Pre-versioning files carry the hatch-vcs package version, e.g.
 # 0.1.dev66+g6f57c4d02 or 0.0.1.dev451+gde1568f (possibly with a .dYYYYMMDD suffix).
@@ -553,9 +554,9 @@ def _generation(version):
     """
     Determine the generation a schema version belongs to.
 
-    A generation is the set of mutually compatible versions: ``"0.y"`` for
-    ``0.y.z``, ``"x"`` for ``x.y.z`` with ``x >= 1``, and ``"legacy"`` for
-    everything before 0.2.0, including a missing version.
+    A generation is a set of versions that need no migration between them:
+    ``"0.y"`` for ``0.y.z``, ``"x"`` for ``x.y.z`` with ``x >= 1``, and
+    ``"legacy"`` for everything before 0.2.0, including a missing version.
 
     Parameters
     ----------
@@ -648,22 +649,40 @@ _MIGRATIONS = {
 }
 
 
+def _archived_versions():
+    """
+    Find the versions archived under ``data/v<version>/``.
+
+    Returns
+    -------
+    frozenset of tuple of int
+        ``(major, minor, patch)`` of each archive directory. A ``data/v*``
+        directory whose name is not ``v<X.Y.Z>`` is skipped here and reported
+        by the archive tests.
+    """
+    parsed = (
+        _parse_semver(directory.name[1:])
+        for directory in DATA_DIR.glob("v*")
+        if directory.is_dir()
+    )
+    return frozenset(version for version in parsed if version is not None)
+
+
+# Read once at import: the archives do not change while the package is in use.
+_ARCHIVED_VERSIONS = _archived_versions()
+
+
 def _released_versions():
     """
     List the schema versions that have been released.
 
     Returns
     -------
-    set of tuple of int
+    frozenset of tuple of int
         ``(major, minor, patch)`` of every version archived under
         ``data/v<version>/``, plus ``SCHEMA_VERSION`` itself.
     """
-    archived = {
-        _parse_semver(directory.name[1:])
-        for directory in DATA_DIR.glob("v*")
-        if directory.is_dir()
-    }
-    return archived | {_parse_semver(SCHEMA_VERSION)}
+    return _ARCHIVED_VERSIONS | {_parse_semver(SCHEMA_VERSION)}
 
 
 def _version_pattern():
@@ -707,8 +726,8 @@ def _supported_generation(data):
     NewerSchemaVersionError
         If the file was written against a newer schema than this reader.
     UnsupportedSchemaVersionError
-        If the version is null, cannot be interpreted, was never released
-        or has no migration path.
+        If the version is null, cannot be interpreted, is 0.2.0 or later but
+        was never released, or has no migration path.
     """
     # Only a missing field means legacy; an explicit null was never valid.
     if "schema_version" in data and data["schema_version"] is None:
@@ -719,14 +738,16 @@ def _supported_generation(data):
     supported = _parse_semver(SCHEMA_VERSION)
     parsed = None if generation == "legacy" else _parse_semver(original)
     # Any newer version is refused, even in the current generation: this reader
-    # would silently drop the fields added since.
+    # cannot know what changed, and from 1.x a newer minor may add fields it
+    # would silently drop.
     if parsed is not None and parsed > supported:
         raise NewerSchemaVersionError(
             f"File has schema_version {original!r}, newer than the "
             f"{SCHEMA_VERSION!r} this reader supports; upgrade the "
             "aavso-starlist-schema package."
         )
-    # A version up to the current one must be one that was actually released.
+    # A version from 0.2.0 up to the current one must be one that was actually
+    # released. (Anything earlier is legacy, and parsed is None.)
     if parsed is not None and parsed not in _released_versions():
         raise UnsupportedSchemaVersionError(
             f"File has schema_version {original!r}, which was never released; "
@@ -767,8 +788,8 @@ def validate_as_written(data):
     NewerSchemaVersionError
         If the file was written against a newer schema than this reader.
     UnsupportedSchemaVersionError
-        If the version is null, cannot be interpreted, was never released
-        or has no migration path.
+        If the version is null, cannot be interpreted, is 0.2.0 or later but
+        was never released, or has no migration path.
     """
     generation = _supported_generation(data)
     if generation in _MIGRATIONS:
@@ -791,17 +812,18 @@ def upgrade(data):
     Returns
     -------
     dict
-        ``data`` itself if it is already in the current generation, otherwise
-        an upgraded copy stamped with `SCHEMA_VERSION`. The input is never
-        modified.
+        ``data`` itself if it is already at the current version, otherwise a
+        copy stamped with `SCHEMA_VERSION`: restamped only if it is an older
+        version of the current generation, upgraded if it is from an older
+        generation. The input is never modified.
 
     Raises
     ------
     NewerSchemaVersionError
         If the file was written against a newer schema than this reader.
     UnsupportedSchemaVersionError
-        If the version is null, cannot be interpreted, was never released
-        or has no migration path.
+        If the version is null, cannot be interpreted, is 0.2.0 or later but
+        was never released, or has no migration path.
 
     Warns
     -----
@@ -813,7 +835,11 @@ def upgrade(data):
     current_generation = _generation(SCHEMA_VERSION)
 
     if generation == current_generation:
-        return data
+        if original == SCHEMA_VERSION:
+            return data
+        # An older version of the current generation needs no migration, only
+        # the stamp of the version it now conforms to.
+        return {**data, "schema_version": SCHEMA_VERSION}
 
     upgraded = copy.deepcopy(data)
     summaries = []
@@ -881,7 +907,8 @@ class StarListSet(BaseModel, PrettyPrintMixin, GenerateInstanceFromExamplesMixin
         2. Upgrade it to the current version with `upgrade`.
         3. Validate the result against this model.
 
-        Data already in the current generation only gets step 3.
+        Data already in the current generation only gets step 3, stamped with
+        `SCHEMA_VERSION` if it states an older version of that generation.
 
         Parameters
         ----------
@@ -917,8 +944,9 @@ class StarListSet(BaseModel, PrettyPrintMixin, GenerateInstanceFromExamplesMixin
             return handler(data)
         generation = _supported_generation(data)
         if generation not in _MIGRATIONS:
-            # Already in the current generation: ordinary validation.
-            return handler(data)
+            # Already in the current generation: restamp an older version so
+            # the model always states the version it conforms to.
+            return handler({**data, "schema_version": SCHEMA_VERSION})
 
         _MIGRATIONS[generation].model.model_validate(data)
         upgraded = upgrade(data)

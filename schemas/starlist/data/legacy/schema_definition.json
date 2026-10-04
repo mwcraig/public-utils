@@ -1,7 +1,6 @@
 {
   "$defs": {
     "AAVSOFilters": {
-      "description": "Photometric filters a smart telescope may report.\n\nValues are AAVSO filter names. The list is restricted to the filters\nsuch telescopes actually use so that typos and unknown codes are\nrejected by the schema.",
       "enum": [
         "TG",
         "TR",
@@ -355,20 +354,13 @@
   "description": "Class to hold a list for which each entry is a star list.",
   "properties": {
     "schema_version": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
+      "default": "0.1.dev63+g61de51202.d20260609",
       "description": "An AAVSO-assigned string that identifies the schema version",
       "examples": [
         "0.0.1"
       ],
       "title": "Starlist Schema Version",
+      "type": "string",
       "unit": "none"
     },
     "star_lists": {
