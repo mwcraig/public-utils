@@ -55,11 +55,13 @@ jobs:
           fetch-depth: 0
 
       - name: Check archived schema files are unchanged
-        # data/v<version>/ is the permanent record of each schema version, and
-        # data/legacy/ of the schema before versioning began. A PR
+        # aavso_starlist_schema_data/v<version>/ is the permanent record of each
+        # schema version, and aavso_starlist_schema_data/legacy/ of the schema
+        # before versioning began. A PR
         # may add an archive but never modify, delete or rename one
         # (--diff-filter=a is every kind of change except an addition).
         run: |
           git fetch origin ${{ github.base_ref }}
           git diff --exit-code --name-only --diff-filter=a \
-            origin/${{ github.base_ref }}... -- 'data/v*' data/legacy
+            origin/${{ github.base_ref }}... -- \
+            'aavso_starlist_schema_data/v*' aavso_starlist_schema_data/legacy

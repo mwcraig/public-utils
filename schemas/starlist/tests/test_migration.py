@@ -333,7 +333,7 @@ def test_validate_as_written_uses_the_model_of_the_files_own_generation():
 
 
 def test_version_that_was_never_released_raises(mocker):
-    # A version at or below the current one that has no archive under data/
+    # A version at or below the current one that has no archive in the data folder
     # was never released, so no file can legitimately carry it. Simulate two
     # patch bumps where the first was skipped.
     major, minor, patch = (int(part) for part in SCHEMA_VERSION.split("."))

@@ -29,9 +29,15 @@ except ImportError:  # pragma: no cover - source tree without the generated file
 
 # Version of the *schema* (the contract manufacturers write files against). This is
 # deliberately independent of the package version above: bump it whenever the
-# generated schema under data/ changes. The archive test fails if the generated
-# schema changes without bumping this constant.
+# generated schema under aavso_starlist_schema_data/ changes. The archive test
+# fails if the generated schema changes without bumping this constant.
 SCHEMA_VERSION = "0.2.0"
+
+# Every released schema version from 0.2.0 on, oldest first; add each new
+# SCHEMA_VERSION here. Listed in the code, rather than read from the archive
+# folders, so the versions this reader accepts never depend on the filesystem.
+# The archive test fails if this differs from the archived versions.
+_RELEASED_VERSIONS = ("0.2.0",)
 
 __all__ = [
     "AAVSOFilters",
@@ -54,8 +60,9 @@ __all__ = [
 ]
 
 # Reference schema files (a shipped deliverable) live alongside this module, both
-# in the source tree and in an installed wheel.
-DATA_DIR = Path(__file__).parent / "data"
+# in the source tree and in an installed wheel. The folder is named for the
+# package because a wheel installs it at the top level of site-packages.
+DATA_DIR = Path(__file__).parent / "aavso_starlist_schema_data"
 
 
 class AAVSOFilters(StrEnum):
@@ -649,29 +656,6 @@ _MIGRATIONS = {
 }
 
 
-def _archived_versions():
-    """
-    Find the versions archived under ``data/v<version>/``.
-
-    Returns
-    -------
-    frozenset of tuple of int
-        ``(major, minor, patch)`` of each archive directory. A ``data/v*``
-        directory whose name is not ``v<X.Y.Z>`` is skipped here and reported
-        by the archive tests.
-    """
-    parsed = (
-        _parse_semver(directory.name[1:])
-        for directory in DATA_DIR.glob("v*")
-        if directory.is_dir()
-    )
-    return frozenset(version for version in parsed if version is not None)
-
-
-# Read once at import: the archives do not change while the package is in use.
-_ARCHIVED_VERSIONS = _archived_versions()
-
-
 def _released_versions():
     """
     List the schema versions that have been released.
@@ -679,10 +663,12 @@ def _released_versions():
     Returns
     -------
     frozenset of tuple of int
-        ``(major, minor, patch)`` of every version archived under
-        ``data/v<version>/``, plus ``SCHEMA_VERSION`` itself.
+        ``(major, minor, patch)`` of every version in ``_RELEASED_VERSIONS``,
+        plus ``SCHEMA_VERSION`` itself.
     """
-    return _ARCHIVED_VERSIONS | {_parse_semver(SCHEMA_VERSION)}
+    return frozenset(
+        _parse_semver(version) for version in (*_RELEASED_VERSIONS, SCHEMA_VERSION)
+    )
 
 
 def _version_pattern():
@@ -751,7 +737,7 @@ def _supported_generation(data):
     if parsed is not None and parsed not in _released_versions():
         raise UnsupportedSchemaVersionError(
             f"File has schema_version {original!r}, which was never released; "
-            "see the archived versions under data/."
+            f"see the archived versions under {DATA_DIR.name}/."
         )
     if generation == _generation(SCHEMA_VERSION) or generation in _MIGRATIONS:
         return generation
@@ -977,7 +963,7 @@ def generate_star_list_set_schema():
     Generate the JSON schema for a `StarListSet`.
 
     This is the schema of the file manufacturers submit, and what the
-    reference files under ``data/`` and the command line tool produce.
+    reference files under ``aavso_starlist_schema_data/`` and the command line tool produce.
 
     Returns
     -------

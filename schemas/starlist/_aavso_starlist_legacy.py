@@ -8,7 +8,8 @@ was written for, separately from validating the result of upgrading it.
 
 This module is frozen:
 
-- Do not edit the models. ``data/legacy/schema_definition.json`` records the
+- Do not edit the models.
+  ``aavso_starlist_schema_data/legacy/schema_definition.json`` records the
   schema they generate, and the tests fail if the two differ.
 - Do not import anything from ``aavso_starlist_schema``. A frozen model that
   shares code with the live models changes whenever they do.

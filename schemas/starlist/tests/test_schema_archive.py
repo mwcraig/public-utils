@@ -1,6 +1,6 @@
 """
-Every schema version is archived unchanged under ``data/v<version>/``; that
-directory is the record of what each version looked like. The current reference
+Every schema version is archived unchanged under
+``aavso_starlist_schema_data/v<version>/``; that directory is the record of what each version looked like. The current reference
 files must match the archive for ``SCHEMA_VERSION``, so changing the schema
 without bumping the version fails here. CI separately rejects a pull request
 that modifies or deletes an archived file.
@@ -15,10 +15,10 @@ import pytest
 
 from aavso_starlist_schema import (
     _MIGRATIONS,
+    _RELEASED_VERSIONS,
     DATA_DIR,
     SCHEMA_VERSION,
     StarListSet,
-    _archived_versions,
     _generation,
     _parse_semver,
 )
@@ -28,20 +28,20 @@ REFERENCE_FILES = ("schema_definition.json", "schema_definition.md")
 
 def archived_versions():
     """
-    Find every archived schema version under ``data/``.
+    Find every archived schema version under ``DATA_DIR``.
 
     Returns
     -------
     list of tuple
         ``(version, directory)`` pairs, where ``version`` is a tuple of ints
-        parsed from the ``data/v<version>/`` directory name. Sorted oldest
+        parsed from the ``v<version>/`` directory name. Sorted oldest
         first, so the last entry is the newest archive.
     """
     found = []
     for directory in DATA_DIR.glob("v*"):
         if directory.is_dir():
             version = _parse_semver(directory.name[1:])
-            assert version is not None, f"data/{directory.name} is not named v<X.Y.Z>"
+            assert version is not None, f"{DATA_DIR.name}/{directory.name} is not named v<X.Y.Z>"
             found.append((version, directory))
     return sorted(found)
 
@@ -55,7 +55,7 @@ def test_current_schema_matches_its_archive(name):
         f"No archive for schema version {SCHEMA_VERSION}; run `uv run poe archive`."
     )
     assert (DATA_DIR / name).read_text() == archived.read_text(), (
-        f"data/{name} differs from the archived {SCHEMA_VERSION} schema. If the "
+        f"The reference {name} differs from the archived {SCHEMA_VERSION} schema. If the "
         "schema changed, bump SCHEMA_VERSION, then run `uv run poe generate` "
         "and `uv run poe archive`."
     )
@@ -90,8 +90,8 @@ def _generation_archive(generation):
     Returns
     -------
     pathlib.Path
-        ``data/legacy/schema_definition.json`` for the legacy generation,
-        otherwise the file from the newest ``data/v<version>/`` whose version
+        ``legacy/schema_definition.json`` under ``DATA_DIR`` for the legacy
+        generation, otherwise the file from the newest ``v<version>/`` whose version
         is in ``generation``.
     """
     if generation == "legacy":
@@ -115,14 +115,16 @@ def test_frozen_model_matches_its_archive(generation):
     assert generated == _generation_archive(generation).read_text()
 
 
-def test_misnamed_archive_directory_does_not_break_the_reader(tmp_path, mocker):
-    # A data/v* directory that is not named v<X.Y.Z> is ignored by the reader
-    # rather than breaking the import; archived_versions() above reports it.
-    (tmp_path / "v0.2.0").mkdir()
-    (tmp_path / "vtmp").mkdir()
-    mocker.patch("aavso_starlist_schema.DATA_DIR", tmp_path)
+def test_released_versions_match_the_archives():
+    # The reader takes its list of released versions from a constant rather
+    # than the filesystem, so the constant must name exactly the archived
+    # versions, oldest first.
+    archived = [directory.name[1:] for _, directory in archived_versions()]
 
-    assert _archived_versions() == {(0, 2, 0)}
+    assert list(_RELEASED_VERSIONS) == archived, (
+        "_RELEASED_VERSIONS in aavso_starlist_schema.py must list exactly the "
+        f"versions archived under {DATA_DIR.name}/, oldest first."
+    )
 
 
 @pytest.mark.parametrize(
