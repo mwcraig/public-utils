@@ -11,7 +11,7 @@ import json
 import re
 import warnings
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, NamedTuple
@@ -750,10 +750,7 @@ def _supported_generation(data):
 
 def validate_as_written(data):
     """
-    Validate raw starlist-set data against the schema version it states.
-
-    This answers "is this file valid for the schema it was written for?" and
-    nothing else: the data is not upgraded.
+    Validate raw starlist-set data against the schema of its own generation.
 
     Parameters
     ----------
@@ -776,6 +773,20 @@ def validate_as_written(data):
     UnsupportedSchemaVersionError
         If the version is null, cannot be interpreted, is 0.2.0 or later but
         was never released, or has no migration path.
+
+    Notes
+    -----
+    This answers "is this file valid for the schema it was written for?"
+    without migrating it to a newer generation. A file from an older
+    generation is checked against that generation's frozen model and returned
+    as that model. A file in the current generation is checked against the
+    current model and, like any `StarListSet`, states `SCHEMA_VERSION`, even
+    if the file stated an older version of the generation.
+
+    A legacy file without a ``schema_version`` comes back with the legacy
+    model's frozen default in that field, a version the file never stated. To
+    pass the result on, use ``model_dump(exclude_unset=True)``, or validate
+    the raw data with `StarListSet` directly.
     """
     generation = _supported_generation(data)
     if generation in _MIGRATIONS:
@@ -798,10 +809,9 @@ def upgrade(data):
     Returns
     -------
     dict
-        ``data`` itself if it is already at the current version, otherwise a
-        copy stamped with `SCHEMA_VERSION`: restamped only if it is an older
-        version of the current generation, upgraded if it is from an older
-        generation. The input is never modified.
+        A deep copy of ``data`` stamped with `SCHEMA_VERSION`, upgraded first
+        if it is from an older generation. The result shares nothing with the
+        input, which is never modified.
 
     Raises
     ------
@@ -820,21 +830,25 @@ def upgrade(data):
     generation = _supported_generation(data)
     current_generation = _generation(SCHEMA_VERSION)
 
-    if generation == current_generation:
-        if original == SCHEMA_VERSION:
-            return data
-        # An older version of the current generation needs no migration, only
-        # the stamp of the version it now conforms to.
-        return {**data, "schema_version": SCHEMA_VERSION}
-
+    # Always a copy, so the result never shares anything with the input.
     upgraded = copy.deepcopy(data)
+    if generation == current_generation:
+        # Needs no migration, only the stamp of the version it now conforms
+        # to; that changes nothing unless the file stated an older version.
+        upgraded["schema_version"] = SCHEMA_VERSION
+        return upgraded
+
     summaries = []
     while generation != current_generation:
         step = _MIGRATIONS[generation]
         upgraded = step.func(upgraded)
+        # Stamp each step's result, so the next step sees the version it
+        # migrates from.
+        upgraded["schema_version"] = step.target
         summaries.append(f"{step.target}: {step.summary}")
         generation = _generation(step.target)
-    # Now in the current generation, so the data conforms to the current version.
+    # Now in the current generation, so the data conforms to the current
+    # version, which may be later than the last step's target.
     upgraded["schema_version"] = SCHEMA_VERSION
 
     was = "missing" if original is None else repr(original)
@@ -899,7 +913,7 @@ class StarListSet(BaseModel, PrettyPrintMixin, GenerateInstanceFromExamplesMixin
         Parameters
         ----------
         data : object
-            The raw input to validation; only a dict is checked for its
+            The raw input to validation; only a mapping is checked for its
             version.
         handler : callable
             Pydantic's validator for this model.
@@ -926,6 +940,8 @@ class StarListSet(BaseModel, PrettyPrintMixin, GenerateInstanceFromExamplesMixin
         SchemaMigrationWarning
             If the data was written against an older schema and was upgraded.
         """
+        if isinstance(data, Mapping):
+            data = dict(data)
         if not isinstance(data, dict):
             return handler(data)
         generation = _supported_generation(data)

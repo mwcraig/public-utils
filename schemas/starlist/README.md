@@ -169,14 +169,18 @@ star_list_set = StarListSet.model_validate_json(Path("starlists.json").read_text
 The first two steps are also available on their own:
 
 - `validate_as_written(data)` takes the parsed dict and validates it against
-  the schema of its own generation, without upgrading. It returns the validated
-  model: a `StarListSet` for a current file, the frozen model for an older one.
+  the schema of its own generation, without migrating it to a newer
+  generation. It returns the validated model: a `StarListSet` for a current
+  file (which states the current version), the frozen model for an older one.
 - `upgrade(data)` takes the parsed dict and returns a dict in the current
-  generation, stamped with the current version (unchanged if already at the
-  current version; it does not modify its input). It does not validate.
+  generation, stamped with the current version. The result is always a copy; the
+  input is not modified. It does not validate.
 
 A file from an older version of the current generation needs no migration; it
 is read without a warning, and the object states the current version.
+
+Version handling applies to mappings and JSON input, not to `from_attributes`
+validation.
 
 A file from any newer version, even one in the same generation, is refused
 with `NewerSchemaVersionError`: this version cannot know what changed, and from

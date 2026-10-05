@@ -3,6 +3,7 @@ import json
 import re
 import warnings
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 from pydantic import ValidationError
@@ -156,12 +157,17 @@ def test_legacy_versions_are_upgraded_with_warning(version):
     assert result["schema_version"] == SCHEMA_VERSION
 
 
-def test_current_version_is_returned_unchanged_without_warning():
-    # Data already at the current version comes back as the same object, silently.
+def test_current_version_is_returned_as_an_equal_copy_without_warning():
+    # Data already at the current version comes back silently as an equal
+    # copy that shares nothing with the input.
     data = _example_data(schema_version=SCHEMA_VERSION)
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        assert upgrade(data) is data
+        result = upgrade(data)
+
+    assert result == data
+    assert result is not data
+    assert result["star_lists"] is not data["star_lists"]
 
 
 def test_upgraded_file_is_stamped_with_a_later_patch_version(mocker):
@@ -193,6 +199,72 @@ def test_older_version_of_current_generation_is_restamped(mocker):
 
     assert result == {"schema_version": patched, "star_lists": []}
     assert data["schema_version"] == SCHEMA_VERSION
+    assert result["star_lists"] is not data["star_lists"]
+
+
+def test_model_restamps_older_version_of_current_generation(mocker):
+    # The model's validator restamps an older version of the current
+    # generation. Simulate a patch bump and call the validator with a
+    # pass-through handler, since the field pattern is fixed at import.
+    major, minor, patch = SCHEMA_VERSION.split(".")
+    patched = f"{major}.{minor}.{int(patch) + 1}"
+    mocker.patch("aavso_starlist_schema.SCHEMA_VERSION", patched)
+    mocker.patch("aavso_starlist_schema._RELEASED_VERSIONS", (SCHEMA_VERSION, patched))
+
+    result = StarListSet._read_older_versions(
+        {"schema_version": SCHEMA_VERSION, "star_lists": []}, lambda data: data
+    )
+
+    assert result["schema_version"] == patched
+
+
+def test_each_migration_step_receives_data_stamped_with_its_source_version(mocker):
+    # In a multi-hop upgrade, each step must see data stamped with the version
+    # the previous step produced, not the original file's version. Simulate a
+    # legacy -> 0.2 -> 1 chain with a fake second step.
+    seen = []
+
+    def _record_version(data):
+        """
+        Record the version a fake migration step receives.
+
+        Parameters
+        ----------
+        data : dict
+            Raw starlist-set data.
+
+        Returns
+        -------
+        dict
+            ``data`` unchanged.
+        """
+        seen.append(data.get("schema_version"))
+        return data
+
+    mocker.patch.dict(
+        _MIGRATIONS, {"0.2": _Migration(StarListSet, "1.0.0", _record_version, "fake")}
+    )
+    mocker.patch("aavso_starlist_schema.SCHEMA_VERSION", "1.0.0")
+
+    with pytest.warns(SchemaMigrationWarning):
+        result = upgrade({"star_lists": []})
+
+    assert seen == [_MIGRATIONS["legacy"].target]
+    assert result["schema_version"] == "1.0.0"
+
+
+def test_model_applies_version_handling_to_any_mapping(next_generation_version):
+    # A mapping that is not a dict gets the same version handling as a dict:
+    # a legacy one is upgraded and a newer one is refused.
+    with pytest.warns(SchemaMigrationWarning):
+        upgraded = StarListSet.model_validate(MappingProxyType({"star_lists": []}))
+    assert upgraded.schema_version == SCHEMA_VERSION
+
+    newer = MappingProxyType(
+        {"schema_version": next_generation_version, "star_lists": []}
+    )
+    with pytest.raises(NewerSchemaVersionError):
+        StarListSet.model_validate(newer)
 
 
 def test_newer_version_raises(next_generation_version):
