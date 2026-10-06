@@ -137,8 +137,15 @@ A change that crosses a generation boundary also needs the following. Do step
    generation, which before the version bump is the current schema.
 6. A migration function from the old generation to the new one, registered in
    `_MIGRATIONS` in `aavso_starlist_schema.py` together with the frozen
-   `StarListSet` from step 5. A migration takes and returns a plain dict and
-   is never edited once released.
+   `StarListSet` from step 5. A migration is never edited once released. It
+   takes a dict and returns the migrated dict; `upgrade()` stamps the target
+   version on the result. It is given a deep copy, so it may modify its
+   argument in place. The dict is plain JSON data when read with
+   `model_validate_json`, but `model_validate` and the constructor pass on
+   data as given once the frozen model has accepted it: a tuple for a list,
+   another mapping for a dict, an instance of the frozen generation's own
+   `StarList` or `StarItem`, an enum member for a string. `upgrade()` called
+   directly validates nothing. The `_Migration` docstring has the details.
 7. A `before.json`/`after.json` pair of sample files under
    `tests/data/migrations/<old generation>_to_<new generation>/`, e.g.
    `legacy_to_0.2`, `0.2_to_0.3`, `0.9_to_1`. `before.json` must be valid for

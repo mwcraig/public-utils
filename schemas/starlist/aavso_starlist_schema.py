@@ -606,6 +606,34 @@ class _Migration(NamedTuple):
     """
     One step of the migration chain, taking a file one generation forward.
 
+    A migration function is called only by `upgrade`, on a deep copy of the
+    input, so it may modify its argument in place and return it, or return a
+    new dict. It need not set ``schema_version``: `upgrade` stamps the target
+    version on the result. The first migration sees the version the file
+    states (or none), each later one the target of the step before. Nothing
+    is validated between migrations.
+
+    The argument is always a ``dict``, but what is inside depends on how
+    `upgrade` was reached:
+
+    - From ``StarListSet.model_validate_json``, plain JSON data: dicts,
+      lists, strings, numbers, booleans and ``None``.
+    - From ``StarListSet.model_validate`` or the constructor, data that the
+      frozen ``model`` accepted, in the form it was given rather than the
+      validated form. ``star_lists`` (and each star list's ``staritems``) may
+      be a list or a tuple, each star list (or star item) a dict, another
+      mapping, or an instance of the frozen generation's own ``StarList``
+      (or ``StarItem``), and values may be in any form that model accepts in
+      lax mode, such as an enum member for a string. Instances of the live
+      models are rejected by the frozen model and never get this far.
+    - From `upgrade` called directly, anything at all: nothing has been
+      validated.
+
+    A migration that passes data through unchanged, like
+    ``_migrate_legacy_to_0_2``, passes such instances on to the current
+    model, which rejects instances of another model's class, so that input
+    ends in `MigrationResultError`.
+
     Attributes
     ----------
     model : type
@@ -614,7 +642,8 @@ class _Migration(NamedTuple):
     target : str
         The schema version the migrated data conforms to.
     func : callable
-        Takes the raw dict and returns the migrated dict. Frozen once released.
+        Takes the raw dict, a copy it may modify, and returns the migrated
+        dict. Frozen once released.
     summary : str
         What changed, for the migration warning.
     """
@@ -800,7 +829,10 @@ def upgrade(data):
     Upgrade raw starlist-set data to the current schema version.
 
     The data is transformed as a plain dict and is not validated, neither
-    before nor after; see `validate_as_written` and `StarListSet`.
+    before nor after; see `validate_as_written` and `StarListSet`. The
+    migrations work on a deep copy of ``data``, so they may modify it in
+    place; the values inside are passed to them as given, not converted to
+    plain dicts and lists (see `_Migration`).
 
     Parameters
     ----------
