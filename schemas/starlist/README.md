@@ -106,7 +106,7 @@ Every schema version is archived unchanged in a `v<version>/` folder under
 require the current files to match the archive for `SCHEMA_VERSION`, so a
 schema change without a version bump fails `pytest`, and CI rejects a pull
 request that modifies or deletes an archived file. The tests also require each
-frozen model to generate exactly the archived schema of its generation
+frozen model to generate exactly the newest archived schema of its generation
 (`legacy/` for the legacy models), which is what keeps it frozen.
 
 #### Changing the schema
@@ -127,8 +127,11 @@ A change that crosses a generation boundary also needs the following. Do step
    computed from `SCHEMA_VERSION` (the `version` key and the `schema_version`
    examples and pattern) with the literal value. The module must not import
    from `aavso_starlist_schema`. `_aavso_starlist_legacy.py` is the example to
-   follow. `test_frozen_model_matches_its_archive` passes once the copy
-   generates the same schema as the newest archive of that generation.
+   follow. Check the copy straight away with
+   `uv run pytest -k test_frozen_model_matches_its_archive`: the test finds
+   every `_aavso_starlist_*.py` module by its name, registered or not, and
+   passes once the copy generates the same schema as the newest archive of its
+   generation, which before the version bump is the current schema.
 6. A migration function from the old generation to the new one, registered in
    `_MIGRATIONS` in `aavso_starlist_schema.py` together with the frozen
    `StarListSet` from step 5. A migration takes and returns a plain dict and

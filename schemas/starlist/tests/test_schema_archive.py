@@ -9,10 +9,14 @@ The frozen models of earlier generations are held to the same archive, so a
 frozen model cannot change either.
 """
 
+import importlib
 import json
+import re
+from pathlib import Path
 
 import pytest
 
+import aavso_starlist_schema
 from aavso_starlist_schema import (
     _MIGRATIONS,
     _RELEASED_VERSIONS,
@@ -85,7 +89,8 @@ def _generation_archive(generation):
     Parameters
     ----------
     generation : str
-        A generation that has been left, a key of ``_MIGRATIONS``.
+        The generation of a frozen model: ``"legacy"``, or a generation such
+        as ``"0.2"`` or ``"1"``, which may still be the current one.
 
     Returns
     -------
@@ -96,23 +101,86 @@ def _generation_archive(generation):
     """
     if generation == "legacy":
         return DATA_DIR / "legacy" / "schema_definition.json"
-    _, directory = max(
+    in_generation = [
         (version, directory)
         for version, directory in archived_versions()
         if _generation(directory.name[1:]) == generation
-    )
+    ]
+    assert in_generation, f"no v<version>/ archive in generation {generation!r}"
+    _, directory = max(in_generation)
     return directory / "schema_definition.json"
 
 
-@pytest.mark.parametrize("generation", _MIGRATIONS)
+# A frozen module is named for its generation: _aavso_starlist_legacy for legacy,
+# _aavso_starlist_v0_2 for 0.2, _aavso_starlist_v1 for 1.
+FROZEN_PREFIX = "_aavso_starlist_"
+
+
+def _frozen_module_name(generation):
+    """
+    Name the module that holds the frozen models of a generation.
+
+    Parameters
+    ----------
+    generation : str
+        ``"legacy"``, or a generation such as ``"0.2"`` or ``"1"``.
+
+    Returns
+    -------
+    str
+        The module name, e.g. ``"_aavso_starlist_v0_2"`` for ``"0.2"``.
+    """
+    if generation == "legacy":
+        return FROZEN_PREFIX + "legacy"
+    return FROZEN_PREFIX + "v" + generation.replace(".", "_")
+
+
+def frozen_generations():
+    """
+    Find the frozen model modules next to ``aavso_starlist_schema.py``.
+
+    This looks at the files, not at ``_MIGRATIONS``, so a frozen module is
+    checked as soon as it exists, before its migration is registered.
+
+    Returns
+    -------
+    list of str
+        The generation of each ``_aavso_starlist_*.py`` module, sorted.
+    """
+    package_dir = Path(aavso_starlist_schema.__file__).parent
+    generations = []
+    for path in package_dir.glob(FROZEN_PREFIX + "*.py"):
+        suffix = path.stem.removeprefix(FROZEN_PREFIX)
+        match = re.fullmatch(r"legacy|v(0_[1-9]\d*|[1-9]\d*)", suffix)
+        assert match, (
+            f"{path.name} is not named for a generation, like "
+            f"{FROZEN_PREFIX}legacy.py, {FROZEN_PREFIX}v0_2.py or {FROZEN_PREFIX}v1.py"
+        )
+        generations.append("legacy" if suffix == "legacy" else suffix[1:].replace("_", "."))
+    return sorted(generations)
+
+
+@pytest.mark.parametrize("generation", frozen_generations())
 def test_frozen_model_matches_its_archive(generation):
-    # The frozen model of a generation must generate exactly the archived
-    # schema of that generation. This is what keeps a frozen model frozen: any
-    # edit to it, or to code it shares with the live models, fails here.
-    frozen = _MIGRATIONS[generation].model
+    # The frozen model of a generation must generate exactly the newest
+    # archived schema of that generation. This is what keeps a frozen model
+    # frozen: any edit to it, or to code it shares with the live models, fails
+    # here. Frozen modules are found by file name, so a new copy is checked
+    # while its generation is still the current one, before the version bump.
+    frozen = importlib.import_module(_frozen_module_name(generation)).StarListSet
     generated = json.dumps(frozen.model_json_schema(), indent=2)
 
     assert generated == _generation_archive(generation).read_text()
+
+
+@pytest.mark.parametrize("generation", _MIGRATIONS)
+def test_migration_validates_with_its_frozen_model(generation):
+    # Each migration validates a file against the frozen StarListSet of the
+    # generation it starts from, so that model is the one checked against the
+    # archive above. A frozen module that is not registered yet is fine.
+    module = importlib.import_module(_frozen_module_name(generation))
+
+    assert _MIGRATIONS[generation].model is module.StarListSet
 
 
 def test_released_versions_match_the_archives():
