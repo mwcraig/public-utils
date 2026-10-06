@@ -111,20 +111,22 @@ frozen model to generate exactly the newest archived schema of its generation
 
 #### Changing the schema
 
-1. Bump `SCHEMA_VERSION` in `aavso_starlist_schema.py` following the policy
-   above, and add the new version to `_RELEASED_VERSIONS` just below it.
-2. Run `uv run poe generate` to regenerate the reference schema files.
-3. Run `uv run poe archive` to copy them to their `v<SCHEMA_VERSION>/` archive.
-4. Run `uv run pytest`. It treats an unexpected `SchemaMigrationWarning` as an
-   error, so a test that reads a file of an older generation must expect the
-   warning with `pytest.warns(SchemaMigrationWarning)`; after a breaking bump
-   that includes any test written when that generation was current.
+First decide, from the policy above, whether the change starts a new
+generation. While the schema is `0.y.z`, every minor bump is a new generation,
+but only a breaking change takes one: a new optional field is a patch bump
+(0.2.0 → 0.2.1) and stays in the same generation. This is the convention
+Cargo uses for `0.y.z` versions, chosen so that a minor bump while `0.y.z`,
+like a major bump from 1.0.0 on, always means a migration is needed.
 
-A change that crosses a generation boundary also needs the following. Do step
-5 first, before touching the live models:
+The steps are listed in the order they are done. The ones marked *new
+generation only* are for a breaking change (0.2 → 0.3, or 1 → 2 from 1.0.0
+on). Any other change (a patch bump while `0.y.z`, a minor or patch bump from
+1.0.0 on) skips them: it only changes the models, bumps the version,
+generates, archives and runs the tests.
 
-5. A frozen copy of the models of the generation being left, in a new module
-   named for it, e.g. `_aavso_starlist_v0_2.py` when leaving 0.2. Copy
+1. *New generation only.* Before touching the live models, make a frozen copy
+   of the models of the generation being left, in a new module named for it,
+   e.g. `_aavso_starlist_v0_2.py` when leaving 0.2. Copy
    `AAVSOFilters`, `StarItem`, `StarList` and `StarListSet` with their fields
    only: no mixins, no methods, no validators that upgrade. Replace anything
    computed from `SCHEMA_VERSION` (the `version` key and the `schema_version`
@@ -135,9 +137,16 @@ A change that crosses a generation boundary also needs the following. Do step
    every `_aavso_starlist_*.py` module by its name, registered or not, and
    passes once the copy generates the same schema as the newest archive of its
    generation, which before the version bump is the current schema.
-6. A migration function from the old generation to the new one, registered in
-   `_MIGRATIONS` in `aavso_starlist_schema.py` together with the frozen
-   `StarListSet` from step 5. A migration is never edited once released. It
+2. Change the live models in `aavso_starlist_schema.py`, bump
+   `SCHEMA_VERSION` following the policy above, and add the new version to
+   `_RELEASED_VERSIONS` just below it.
+3. Run `uv run poe generate` to regenerate the reference schema files.
+4. Run `uv run poe archive` to copy them to their `v<SCHEMA_VERSION>/` archive.
+5. *New generation only.* Write a migration function from the old generation
+   to the new one, and register it in `_MIGRATIONS` in
+   `aavso_starlist_schema.py` together with the frozen `StarListSet`. When no
+   data has to change, `_migrate_legacy_to_0_2` is the template for a no-op
+   migration. A migration is never edited once released. It
    takes a dict and returns the migrated dict; `upgrade()` stamps the target
    version on the result. It is given a deep copy, so it may modify its
    argument in place. The dict is plain JSON data when read with
@@ -146,19 +155,24 @@ A change that crosses a generation boundary also needs the following. Do step
    another mapping for a dict, an instance of the frozen generation's own
    `StarList` or `StarItem`, an enum member for a string. `upgrade()` called
    directly validates nothing. The `_Migration` docstring has the details.
-7. A `before.json`/`after.json` pair of sample files under
+6. *New generation only.* Add a `before.json`/`after.json` pair of sample
+   files under
    `tests/data/migrations/<old generation>_to_<new generation>/`, e.g.
    `legacy_to_0.2`, `0.2_to_0.3`, `0.9_to_1`. `before.json` must be valid for
    the frozen model of the old generation and `after.json` for the new one.
+7. Run `uv run pytest`. It treats an unexpected `SchemaMigrationWarning` as an
+   error, so a test that reads a file of an older generation must expect the
+   warning with `pytest.warns(SchemaMigrationWarning)`; after a breaking bump
+   that includes any test written when that generation was current.
 
-While the schema is `0.y.z`, every minor bump is a new generation, but only a
-breaking change takes one: a new optional field is a patch bump (0.2.0 →
-0.2.1) and needs only steps 1 to 4. This is the convention Cargo uses for
-`0.y.z` versions, chosen so that a minor bump while `0.y.z`, like a major bump
-from 1.0.0 on, always means a migration is needed. A breaking change (0.2 →
-0.3) needs steps 5 to 7; `test_migration_chain_reaches_current_generation`
-fails without them. When no data has to change, `_migrate_legacy_to_0_2` is
-the template for a no-op migration.
+A breaking bump without its migration fails many tests, not one. With no
+migration out of the generation being left, files of every older generation
+have no path to the current one either, so each test that upgrades a legacy
+file fails too, mostly with `DID NOT WARN` or a `KeyError` naming the
+generation being left. Look first at
+`test_migration_chain_reaches_current_generation`, which names the missing
+migration. A migration without its sample files fails
+`test_each_migration_step_matches_its_before_after_pair`.
 
 #### Reading starlist files
 
