@@ -54,6 +54,51 @@ def test_starlist_markdown_table():
     assert _generate_markdown() == mdown_file_content
 
 
+def test_absolute_focus_is_optional():
+    # absolute_focus may be left out of a star list, which then reads it as
+    # None; it is not merely nullable but also absent from "required".
+    data = StarList.from_examples().model_dump()
+    del data["absolute_focus"]
+
+    assert StarList.model_validate(data).absolute_focus is None
+    assert "absolute_focus" not in StarList.model_json_schema()["required"]
+
+
+def test_absolute_focus_is_kept_when_present():
+    # A value given for absolute_focus survives a JSON round trip.
+    star_list = StarList.from_examples()
+
+    assert star_list.absolute_focus == 1823
+    assert StarList.model_validate_json(star_list.model_dump_json()).absolute_focus == 1823
+
+
+def _count_cells(row):
+    """
+    Count the cells in one row of a markdown table.
+
+    Parameters
+    ----------
+    row : str
+        A table row, beginning and ending with ``|``.
+
+    Returns
+    -------
+    int
+        The number of cells, counting only pipes not escaped as ``\\|``.
+    """
+    return len(re.findall(r"(?<!\\)\|", row)) - 1
+
+
+@pytest.mark.parametrize("klass", [StarItem, StarList, StarListSet])
+def test_markdown_table_rows_have_as_many_cells_as_the_header(klass):
+    # A pipe written into a cell, such as the one in the type ``int | None``,
+    # would add a cell and shift the rest of the row out of its columns.
+    header, *rows = klass.markdown_table().splitlines()
+
+    for row in rows:
+        assert _count_cells(row) == _count_cells(header), row
+
+
 def test_starlist_json():
     # The committed JSON reference file is current with the models.
     # Compared as text, so key order and whitespace must match too.
