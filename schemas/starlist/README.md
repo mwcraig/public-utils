@@ -146,10 +146,10 @@ generates, archives and runs the tests.
 4. Run `uv run poe archive` to copy them to their `v<SCHEMA_VERSION>/` archive.
 5. *New generation only.* Write a migration function from the old generation
    to the new one, and register it in `_MIGRATIONS` in
-   `aavso_starlist_schema.py` together with the frozen `StarListSet`. When no
-   data has to change, `_migrate_legacy_to_0_2` is the template for a no-op
-   migration, and `_migrate_0_2_to_0_3` for one that fills in a new required
-   field. A migration is never edited once released. It
+   `aavso_starlist_schema.py` together with the frozen `StarListSet`.
+   `_migrate_legacy_to_0_2` is the template for a no-op migration, when no
+   data has to change, and `_migrate_0_2_to_0_3` for one that fills in a new
+   required field. A migration is never edited once released. It
    takes a dict and returns the migrated dict; `upgrade()` stamps the target
    version on the result. It is given a deep copy, so it may modify its
    argument in place. Through `model_validate_json`, `model_validate` and the

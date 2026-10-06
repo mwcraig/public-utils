@@ -712,9 +712,11 @@ def _with_photometry_software(star_list):
 
     Parameters
     ----------
-    star_list : mapping or pydantic.BaseModel
-        A star list as accepted by the frozen 0.2 model: a mapping, or an
-        instance of a model.
+    star_list : object
+        One entry of ``star_lists``. Reached through the model it is always a
+        dict of plain data (see `_Migration`); from `upgrade` called directly
+        it may also be another mapping or a model instance, which are
+        converted to a dict, or anything else.
 
     Returns
     -------
@@ -722,7 +724,8 @@ def _with_photometry_software(star_list):
         A dict of the star list's fields with ``photometry_software`` set to
         ``["unknown"]`` if it had no such key; an existing value is kept,
         since the frozen 0.2 models ignore keys they do not define. Anything
-        else is returned unchanged, for validation to reject.
+        that is neither a mapping nor a model is returned unchanged, for
+        validation to reject.
     """
     if isinstance(star_list, BaseModel):
         star_list = star_list.model_dump()
@@ -745,7 +748,9 @@ def _migrate_0_2_to_0_3(data):
     -------
     dict
         ``data`` with ``photometry_software``, which became required in
-        0.3.0, set to ``["unknown"]`` on every star list that lacks it.
+        0.3.0, set to ``["unknown"]`` on every star list that lacks it, and
+        ``star_lists`` a list. A tuple of star lists, which only `upgrade`
+        called directly can pass, is handled too.
     """
     star_lists = data.get("star_lists")
     if isinstance(star_lists, (list, tuple)):

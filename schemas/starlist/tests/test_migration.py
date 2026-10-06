@@ -261,10 +261,10 @@ def test_each_migration_step_receives_data_stamped_with_its_source_version(mocke
 def test_gap_in_migration_chain_names_the_generation_without_a_migration(mocker):
     # A breaking bump whose migration out of the generation being left has not
     # been written yet must say so, not fail with a bare KeyError. Simulate a
-    # bump to 1.0.0 with no migration out of 0.2: a legacy file still has its
-    # first step, then has nowhere to go.
+    # bump to 1.0.0 with no migration out of 0.3: a legacy file still has its
+    # steps to 0.2 and 0.3, then has nowhere to go.
     mocker.patch("aavso_starlist_schema.SCHEMA_VERSION", "1.0.0")
-    expected = "no migration out of schema generation '0.2'"
+    expected = "no migration out of schema generation '0.3'"
 
     with pytest.raises(UnsupportedSchemaVersionError, match=expected):
         upgrade({"star_lists": []})
@@ -615,6 +615,9 @@ def test_model_upgrades_legacy_data_built_in_python(shape):
     # Data the frozen model accepts in a shape JSON cannot give is converted to
     # plain data before migrating, so it upgrades like the same file read from
     # JSON instead of being rejected by the current model as a migration bug.
+    # This is the end-to-end check. The 0.2 to 0.3 migration also copes with
+    # these shapes itself, so it is the next test, which records what each
+    # migration receives, that pins the conversion.
     with pytest.warns(SchemaMigrationWarning):
         expected = StarListSet.model_validate_json(json.dumps(_legacy_data_json()))
     with pytest.warns(SchemaMigrationWarning):
@@ -628,35 +631,60 @@ def test_model_upgrades_legacy_data_built_in_python(shape):
 
 @pytest.mark.parametrize("shape", ["instances", "tuple", "mapping", "enum"])
 def test_migration_reached_through_the_model_sees_only_plain_data(shape, mocker):
-    # Through the model a migration only ever sees what JSON text would give,
-    # whatever shape the caller built the data in.
+    # Through the model every migration in the chain, not only the first, sees
+    # only what JSON text would give, whatever shape the caller built the data
+    # in. A legacy file passes through every registered migration.
     seen = []
 
-    def _record_argument(data):
+    def _recording(func):
         """
-        Record the argument a stand-in migration receives.
+        Wrap a migration so that it records the argument it receives.
 
         Parameters
         ----------
-        data : dict
-            Raw starlist-set data.
+        func : callable
+            The real migration function.
 
         Returns
         -------
-        dict
-            ``data`` unchanged.
+        callable
+            A function that records a deep copy of its argument, then
+            returns what ``func`` returns for it.
         """
-        seen.append(copy.deepcopy(data))
-        return data
 
-    legacy = _MIGRATIONS["legacy"]
-    mocker.patch.dict(_MIGRATIONS, {"legacy": legacy._replace(func=_record_argument)})
+        def _record_argument(data):
+            """
+            Record the argument, then run the real migration on it.
+
+            Parameters
+            ----------
+            data : dict
+                Raw starlist-set data.
+
+            Returns
+            -------
+            dict
+                The result of the real migration.
+            """
+            seen.append(copy.deepcopy(data))
+            return func(data)
+
+        return _record_argument
+
+    mocker.patch.dict(
+        _MIGRATIONS,
+        {
+            generation: step._replace(func=_recording(step.func))
+            for generation, step in _MIGRATIONS.items()
+        },
+    )
 
     with pytest.warns(SchemaMigrationWarning):
         StarListSet.model_validate(_legacy_python_data(shape))
 
-    assert len(seen) == 1
-    _assert_plain(seen[0])
+    assert len(seen) == len(_MIGRATIONS)
+    for argument in seen:
+        _assert_plain(argument)
     assert seen[0]["star_lists"] == _legacy_data_json()["star_lists"]
 
 
@@ -717,7 +745,9 @@ def test_upgrade_called_directly_passes_values_through_unconverted(mocker):
         dict
             ``data`` unchanged.
         """
-        seen.append(data)
+        # A shallow copy: the later 0.2 to 0.3 step replaces the star lists in
+        # the dict it is passed, and the values inside are what is checked.
+        seen.append(dict(data))
         return data
 
     legacy = _MIGRATIONS["legacy"]
