@@ -89,14 +89,16 @@ legacy file and upgraded with a warning, see below). The generated
 
 A *generation* is a set of versions that need no migration between them: a
 reader reads any released version of its own generation up to its own version,
-and refuses newer ones. The generations are `0.2` for 0.2.z, `1` for 1.y.z, and
-`legacy` for everything before 0.2.0 (files with no `schema_version`,
+and refuses newer ones. The generations are `0.2` for 0.2.z, `0.3` for 0.3.z
+(the current one), and so on, then `1` for 1.y.z, and `legacy` for everything
+before 0.2.0 (files with no `schema_version`,
 package-version strings such as `0.0.1.dev451+gde1568f`, or a version below
 0.2.0 such as `0.0.1`).
 Crossing a generation boundary requires a migration.
 
 Every generation that has been left behind keeps a *frozen* copy of its models
-in its own module (`_aavso_starlist_legacy.py` for the legacy generation), so
+in its own module (`_aavso_starlist_legacy.py` for the legacy generation,
+`_aavso_starlist_v0_2.py` for 0.2), so
 that an old file can still be validated against the schema it was written for.
 The live models in `aavso_starlist_schema.py` are always the current generation.
 
@@ -121,12 +123,12 @@ A change that crosses a generation boundary also needs the following. Do step
 5 first, before touching the live models:
 
 5. A frozen copy of the models of the generation being left, in a new module
-   named for it, e.g. `_aavso_starlist_v0_2.py` when leaving 0.2. Copy
+   named for it, e.g. `_aavso_starlist_v0_2.py`, made when leaving 0.2. Copy
    `AAVSOFilters`, `StarItem`, `StarList` and `StarListSet` with their fields
    only: no mixins, no methods, no validators that upgrade. Replace anything
    computed from `SCHEMA_VERSION` (the `version` key and the `schema_version`
    examples and pattern) with the literal value. The module must not import
-   from `aavso_starlist_schema`. `_aavso_starlist_legacy.py` is the example to
+   from `aavso_starlist_schema`. `_aavso_starlist_v0_2.py` is the example to
    follow. `test_frozen_model_matches_its_archive` passes once the copy
    generates the same schema as the newest archive of that generation.
 6. A migration function from the old generation to the new one, registered in
@@ -145,7 +147,8 @@ breaking change takes one: a new optional field is a patch bump (0.2.0 →
 from 1.0.0 on, always means a migration is needed. A breaking change (0.2 →
 0.3) needs steps 5 to 7; `test_migration_chain_reaches_current_generation`
 fails without them. When no data has to change, `_migrate_legacy_to_0_2` is
-the template for a no-op migration.
+the template for a no-op migration, and `_migrate_0_2_to_0_3` for one that
+fills in a new required field.
 
 #### Reading starlist files
 
