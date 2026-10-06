@@ -115,7 +115,10 @@ frozen model to generate exactly the newest archived schema of its generation
    above, and add the new version to `_RELEASED_VERSIONS` just below it.
 2. Run `uv run poe generate` to regenerate the reference schema files.
 3. Run `uv run poe archive` to copy them to their `v<SCHEMA_VERSION>/` archive.
-4. Run `uv run pytest`.
+4. Run `uv run pytest`. It treats an unexpected `SchemaMigrationWarning` as an
+   error, so a test that reads a file of an older generation must expect the
+   warning with `pytest.warns(SchemaMigrationWarning)`; after a breaking bump
+   that includes any test written when that generation was current.
 
 A change that crosses a generation boundary also needs the following. Do step
 5 first, before touching the live models:
