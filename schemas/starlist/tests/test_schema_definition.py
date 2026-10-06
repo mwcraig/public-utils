@@ -164,6 +164,52 @@ def test_make_star_list_from_table_of_items():
         StarList.from_table(table)
 
 
+def _single_star_table():
+    """
+    Build a table of one star item whose metadata holds the example StarList.
+
+    Returns
+    -------
+    astropy.table.Table
+        One row with every `StarItem` column, and every `StarList` field
+        except ``staritems`` in its ``meta``, at its example value.
+    """
+    star_item = StarItem.from_examples().model_dump()
+    table = Table({key: [value] for key, value in star_item.items()})
+    table.meta = StarList.from_examples().model_dump()
+    del table.meta["staritems"]
+    return table
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    [name for name, field in StarList.model_fields.items() if not field.is_required()],
+)
+def test_from_table_allows_missing_optional_metadata(field_name):
+    # An optional field may be left out of the metadata; the star list then
+    # gets the field's default instead of an error about a missing key.
+    table = _single_star_table()
+    del table.meta[field_name]
+
+    star_list = StarList.from_table(table)
+
+    assert getattr(star_list, field_name) == StarList.model_fields[field_name].default
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    [name for name, field in StarList.model_fields.items() if not field.is_required()],
+)
+def test_from_table_keeps_optional_metadata_that_is_present(field_name):
+    # An optional field given in the metadata is kept, not replaced by its
+    # default.
+    table = _single_star_table()
+
+    star_list = StarList.from_table(table)
+
+    assert getattr(star_list, field_name) == StarList.model_fields[field_name].examples[0]
+
+
 def test_make_table_from_starlist():
     # Make sure we can make a table from a starlist
 
