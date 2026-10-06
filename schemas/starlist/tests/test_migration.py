@@ -10,6 +10,7 @@ import pytest
 from pydantic import ValidationError
 
 import _aavso_starlist_legacy
+import _aavso_starlist_v0_2
 from aavso_starlist_schema import (
     _MIGRATIONS,
     SCHEMA_VERSION,
@@ -154,7 +155,9 @@ def test_legacy_versions_are_upgraded_with_warning(version):
     message = str(record[0].message)
     assert ("missing" if version is None else version) in message
     assert SCHEMA_VERSION in message
-    assert _MIGRATIONS["legacy"].summary in message
+    # A legacy file goes through every migration, so the warning names each.
+    for step in _MIGRATIONS.values():
+        assert step.summary in message
 
     assert result["schema_version"] == SCHEMA_VERSION
 
@@ -737,12 +740,13 @@ def test_upgrade_called_directly_passes_values_through_unconverted(mocker):
 
 def test_file_from_before_absolute_focus_reads_it_as_none():
     # The 0.2.0 sample file predates absolute_focus (added in 0.2.1); it is
-    # read at the current version with absolute_focus None.
+    # upgraded to the current version with absolute_focus None.
     _, written_at_0_2_0 = _before_after_pair("legacy")
     assert written_at_0_2_0["schema_version"] == "0.2.0"
     assert "absolute_focus" not in written_at_0_2_0["star_lists"][0]
 
-    result = StarListSet.model_validate(written_at_0_2_0)
+    with pytest.warns(SchemaMigrationWarning):
+        result = StarListSet.model_validate(written_at_0_2_0)
 
     assert result.schema_version == SCHEMA_VERSION
     assert result.star_lists[0].absolute_focus is None
@@ -758,6 +762,87 @@ def test_legacy_file_is_upgraded_with_absolute_focus_none():
 
     assert result.schema_version == SCHEMA_VERSION
     assert result.star_lists[0].absolute_focus is None
+
+
+def _written_at_0_2(version):
+    """
+    Load the sample file written at a version of the 0.2 generation.
+
+    Parameters
+    ----------
+    version : {"0.2.0", "0.2.1"}
+        The version the file states.
+
+    Returns
+    -------
+    dict
+        For 0.2.0, ``after.json`` of the legacy migration, which predates
+        ``absolute_focus``; for 0.2.1, ``before.json`` of the 0.2 migration,
+        which sets ``absolute_focus`` on one star list and not the other.
+    """
+    before, after = _before_after_pair("legacy" if version == "0.2.0" else "0.2")
+    data = after if version == "0.2.0" else before
+    assert data["schema_version"] == version
+    return data
+
+
+@pytest.mark.parametrize("version", ["0.2.0", "0.2.1"])
+def test_0_2_file_is_validated_against_the_frozen_0_2_model(version):
+    # validate_as_written checks a file from either 0.2 version against the
+    # frozen 0.2 model, without upgrading it.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        result = validate_as_written(_written_at_0_2(version))
+
+    assert isinstance(result, _aavso_starlist_v0_2.StarListSet)
+    assert result.schema_version == version
+
+
+@pytest.mark.parametrize("version", ["0.2.0", "0.2.1"])
+def test_0_2_file_is_upgraded_with_photometry_software_unknown(version):
+    # A file from either 0.2 version is upgraded with one warning, naming the
+    # 0.2 migration but not the legacy one, and every star list gets
+    # photometry_software ["unknown"].
+    with pytest.warns(SchemaMigrationWarning) as record:
+        result = StarListSet.model_validate(_written_at_0_2(version))
+
+    assert len(record) == 1
+    message = str(record[0].message)
+    assert repr(version) in message
+    assert _MIGRATIONS["0.2"].summary in message
+    assert _MIGRATIONS["legacy"].summary not in message
+
+    assert result.schema_version == SCHEMA_VERSION
+    assert [star_list.photometry_software for star_list in result.star_lists] == [
+        ["unknown"]
+    ] * len(result.star_lists)
+
+
+def test_0_2_file_keeps_photometry_software_it_already_has():
+    # The frozen 0.2 models ignore keys they do not define, so a 0.2 file may
+    # already carry photometry_software; the migration keeps that value and
+    # fills in only the star lists without one.
+    data = copy.deepcopy(_written_at_0_2("0.2.1"))
+    data["star_lists"][0]["photometry_software"] = ["bandaid 1.2.3"]
+
+    with pytest.warns(SchemaMigrationWarning):
+        result = StarListSet.model_validate(data)
+
+    assert result.star_lists[0].photometry_software == ["bandaid 1.2.3"]
+    assert result.star_lists[1].photometry_software == ["unknown"]
+
+
+def test_legacy_file_is_upgraded_through_both_migrations():
+    # A legacy file is migrated to 0.2 and then to 0.3, and so gets
+    # photometry_software ["unknown"] too. (That the warning names both steps
+    # is checked by test_legacy_versions_are_upgraded_with_warning.)
+    before, _ = _before_after_pair("legacy")
+
+    with pytest.warns(SchemaMigrationWarning):
+        result = StarListSet.model_validate(before)
+
+    assert result.schema_version == SCHEMA_VERSION
+    assert result.star_lists[0].photometry_software == ["unknown"]
 
 
 def test_current_file_with_absolute_focus_round_trips():
