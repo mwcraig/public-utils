@@ -438,7 +438,14 @@ class StarList(BaseModel, PrettyPrintMixin, GenerateInstanceFromExamplesMixin):
             Additional metadata to ustoin the StarList object.
             If not provided, the metadata from the table will be used.
             If both are provided, the metadata from this argument will
-            take precedence.
+            take precedence. Optional fields may be omitted and take their
+            default.
+
+        Raises
+        ------
+        ValueError
+            If the table lacks a star item column, or the metadata lacks a
+            required field.
 
         Returns
         -------
@@ -463,7 +470,10 @@ class StarList(BaseModel, PrettyPrintMixin, GenerateInstanceFromExamplesMixin):
 
         final_meta["staritems"] = star_items
 
-        if missing_keys := set(cls.model_fields.keys()) - set(final_meta.keys()):
+        # Only required fields must be present; a field with a default, such
+        # as ``stack``, takes its default when it is missing.
+        required = {name for name, field in cls.model_fields.items() if field.is_required()}
+        if missing_keys := required - set(final_meta.keys()):
             raise ValueError(f"Missing keys in metadata: {', '.join(missing_keys)}")
 
         # Create the StarList object
