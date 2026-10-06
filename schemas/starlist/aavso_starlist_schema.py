@@ -19,6 +19,7 @@ from typing import Annotated, NamedTuple
 from astropy.table import Table
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from pydantic.alias_generators import to_snake
+from pydantic_core import PydanticSerializationError, to_jsonable_python
 
 import _aavso_starlist_legacy  # frozen models of the legacy generation
 
@@ -616,23 +617,15 @@ class _Migration(NamedTuple):
     The argument is always a ``dict``, but what is inside depends on how
     `upgrade` was reached:
 
-    - From ``StarListSet.model_validate_json``, plain JSON data: dicts,
-      lists, strings, numbers, booleans and ``None``.
-    - From ``StarListSet.model_validate`` or the constructor, data that the
-      frozen ``model`` accepted, in the form it was given rather than the
-      validated form. ``star_lists`` (and each star list's ``staritems``) may
-      be a list or a tuple, each star list (or star item) a dict, another
-      mapping, or an instance of the frozen generation's own ``StarList``
-      (or ``StarItem``), and values may be in any form that model accepts in
-      lax mode, such as an enum member for a string. Instances of the live
-      models are rejected by the frozen model and never get this far.
+    - From ``StarListSet.model_validate_json``, ``model_validate`` or the
+      constructor, plain JSON data: dicts, lists, strings, numbers, booleans
+      and ``None``. The input is first validated, as given, against the
+      frozen ``model``, then converted by `_to_plain`: tuples become lists,
+      other mappings dicts, instances of the frozen generation's own
+      ``StarList`` or ``StarItem`` dicts of their fields, enum members their
+      values. Keys the frozen model ignores are kept.
     - From `upgrade` called directly, anything at all: nothing has been
-      validated.
-
-    A migration that passes data through unchanged, like
-    ``_migrate_legacy_to_0_2``, passes such instances on to the current
-    model, which rejects instances of another model's class, so that input
-    ends in `MigrationResultError`.
+      validated or converted.
 
     Attributes
     ----------
@@ -824,6 +817,35 @@ def validate_as_written(data):
     return StarListSet.model_validate(data)
 
 
+def _to_plain(value):
+    """
+    Convert data built in Python to the plain form JSON text would give.
+
+    Parameters
+    ----------
+    value : object
+        Raw starlist-set data, or any value inside it.
+
+    Returns
+    -------
+    object
+        A new structure of dicts, lists, strings, numbers, booleans and
+        ``None``: every mapping becomes a dict, a tuple a list, a model
+        instance a dict of its fields, an enum member its value and a
+        datetime an ISO 8601 string. A value of a type pydantic cannot
+        serialize, possible only under a key the models ignore, is passed on
+        as given.
+    """
+    if isinstance(value, Mapping):
+        return {key: _to_plain(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_to_plain(item) for item in value]
+    try:
+        return to_jsonable_python(value)
+    except PydanticSerializationError:
+        return value
+
+
 def upgrade(data):
     """
     Upgrade raw starlist-set data to the current schema version.
@@ -832,7 +854,8 @@ def upgrade(data):
     before nor after; see `validate_as_written` and `StarListSet`. The
     migrations work on a deep copy of ``data``, so they may modify it in
     place; the values inside are passed to them as given, not converted to
-    plain dicts and lists (see `_Migration`).
+    plain dicts and lists, as `StarListSet` does before calling this (see
+    `_Migration`).
 
     Parameters
     ----------
@@ -942,8 +965,11 @@ class StarListSet(BaseModel, PrettyPrintMixin, GenerateInstanceFromExamplesMixin
         constructor, so every way of creating a `StarListSet` reads old files.
         Data from an older generation goes through three steps:
 
-        1. Validate it against the frozen model of its own generation.
-        2. Upgrade it to the current version with `upgrade`.
+        1. Validate it, as given, against the frozen model of its own
+           generation.
+        2. Convert it to plain JSON data with `_to_plain`, keeping keys the
+           frozen model ignores, and upgrade it to the current version with
+           `upgrade`.
         3. Validate the result against this model.
 
         Data already in the current generation only gets step 3, stamped with
@@ -990,7 +1016,9 @@ class StarListSet(BaseModel, PrettyPrintMixin, GenerateInstanceFromExamplesMixin
             return handler({**data, "schema_version": SCHEMA_VERSION})
 
         _MIGRATIONS[generation].model.model_validate(data)
-        upgraded = upgrade(data)
+        # Convert the raw input, not the validated model, so keys the frozen
+        # model ignores still reach the migrations.
+        upgraded = upgrade(_to_plain(data))
         try:
             return handler(upgraded)
         except ValidationError as error:

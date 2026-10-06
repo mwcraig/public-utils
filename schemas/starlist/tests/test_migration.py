@@ -2,6 +2,7 @@ import copy
 import json
 import re
 import warnings
+from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
 
@@ -480,3 +481,254 @@ def test_invalid_migration_result_is_a_distinct_error(mocker):
 
     assert not isinstance(excinfo.value, ValueError)
     assert isinstance(excinfo.value.__cause__, ValidationError)
+
+
+class _Mapping(Mapping):
+    """
+    A minimal mapping that is not a dict, as code calling the model might pass.
+
+    Unlike ``MappingProxyType`` it can be deep-copied, so `upgrade` accepts it
+    when called directly.
+
+    Parameters
+    ----------
+    data : dict
+        The items to expose.
+    """
+
+    def __init__(self, data):
+        self._data = dict(data)
+
+    def __getitem__(self, key):
+        """
+        Look up a key.
+
+        Parameters
+        ----------
+        key : str
+            The key.
+
+        Returns
+        -------
+        object
+            Its value.
+        """
+        return self._data[key]
+
+    def __iter__(self):
+        """
+        Iterate over the keys.
+
+        Returns
+        -------
+        iterator
+            The keys.
+        """
+        return iter(self._data)
+
+    def __len__(self):
+        """
+        Count the keys.
+
+        Returns
+        -------
+        int
+            The number of keys.
+        """
+        return len(self._data)
+
+
+def _legacy_python_data(shape):
+    """
+    Build a legacy star list set as code might, in a shape JSON cannot give.
+
+    Parameters
+    ----------
+    shape : str
+        ``"instances"`` for frozen legacy ``StarList`` instances, ``"tuple"``
+        for a tuple of star lists, ``"mapping"`` for star lists that are
+        mappings but not dicts, or ``"enum"`` for an enum member as ``filter``.
+
+    Returns
+    -------
+    dict
+        The legacy sample file, with its star lists in that shape.
+    """
+    before, _ = _before_after_pair("legacy")
+    star_lists = before["star_lists"]
+    if shape == "instances":
+        before["star_lists"] = [
+            _aavso_starlist_legacy.StarList.model_validate(star_list)
+            for star_list in star_lists
+        ]
+    elif shape == "tuple":
+        before["star_lists"] = tuple(star_lists)
+    elif shape == "mapping":
+        before["star_lists"] = [_Mapping(star_list) for star_list in star_lists]
+    elif shape == "enum":
+        for star_list in star_lists:
+            star_list["filter"] = _aavso_starlist_legacy.AAVSOFilters(star_list["filter"])
+    return before
+
+
+def _legacy_data_json():
+    """
+    Load the legacy sample file as plain JSON data.
+
+    Returns
+    -------
+    dict
+        The parsed ``before.json`` of the legacy migration.
+    """
+    before, _ = _before_after_pair("legacy")
+    return before
+
+
+def _assert_plain(value):
+    """
+    Check that a value is made only of the types JSON text parses into.
+
+    Parameters
+    ----------
+    value : object
+        The value to check, recursively.
+    """
+    if type(value) is dict:
+        for key, item in value.items():
+            assert type(key) is str, f"key {key!r} is a {type(key).__name__}"
+            _assert_plain(item)
+    elif type(value) is list:
+        for item in value:
+            _assert_plain(item)
+    else:
+        assert type(value) in (str, int, float, bool, type(None)), (
+            f"{value!r} is a {type(value).__name__}"
+        )
+
+
+@pytest.mark.parametrize("shape", ["instances", "tuple", "mapping", "enum"])
+def test_model_upgrades_legacy_data_built_in_python(shape):
+    # Data the frozen model accepts in a shape JSON cannot give is converted to
+    # plain data before migrating, so it upgrades like the same file read from
+    # JSON instead of being rejected by the current model as a migration bug.
+    with pytest.warns(SchemaMigrationWarning):
+        expected = StarListSet.model_validate_json(json.dumps(_legacy_data_json()))
+    with pytest.warns(SchemaMigrationWarning):
+        validated = StarListSet.model_validate(_legacy_python_data(shape))
+    with pytest.warns(SchemaMigrationWarning):
+        constructed = StarListSet(**_legacy_python_data(shape))
+
+    assert validated == expected
+    assert constructed == expected
+
+
+@pytest.mark.parametrize("shape", ["instances", "tuple", "mapping", "enum"])
+def test_migration_reached_through_the_model_sees_only_plain_data(shape, mocker):
+    # Through the model a migration only ever sees what JSON text would give,
+    # whatever shape the caller built the data in.
+    seen = []
+
+    def _record_argument(data):
+        """
+        Record the argument a stand-in migration receives.
+
+        Parameters
+        ----------
+        data : dict
+            Raw starlist-set data.
+
+        Returns
+        -------
+        dict
+            ``data`` unchanged.
+        """
+        seen.append(copy.deepcopy(data))
+        return data
+
+    legacy = _MIGRATIONS["legacy"]
+    mocker.patch.dict(_MIGRATIONS, {"legacy": legacy._replace(func=_record_argument)})
+
+    with pytest.warns(SchemaMigrationWarning):
+        StarListSet.model_validate(_legacy_python_data(shape))
+
+    assert len(seen) == 1
+    _assert_plain(seen[0])
+    assert seen[0]["star_lists"] == _legacy_data_json()["star_lists"]
+
+
+def test_key_the_frozen_model_ignores_reaches_the_migration(mocker):
+    # The raw input is converted, not a dump of the validated frozen model, so
+    # a key that model ignores is still there for a migration that uses it.
+    seen = []
+
+    def _record_argument(data):
+        """
+        Record the argument a stand-in migration receives.
+
+        Parameters
+        ----------
+        data : dict
+            Raw starlist-set data.
+
+        Returns
+        -------
+        dict
+            ``data`` unchanged.
+        """
+        seen.append(copy.deepcopy(data))
+        return data
+
+    legacy = _MIGRATIONS["legacy"]
+    mocker.patch.dict(_MIGRATIONS, {"legacy": legacy._replace(func=_record_argument)})
+    data = _legacy_python_data("instances")
+    data["unknown_key"] = ("kept", MappingProxyType({"nested": 1}))
+    data["star_lists"][0] = MappingProxyType(
+        {**data["star_lists"][0].model_dump(), "unknown_in_star_list": "kept"}
+    )
+
+    with pytest.warns(SchemaMigrationWarning):
+        StarListSet.model_validate(data)
+
+    assert seen[0]["unknown_key"] == ["kept", {"nested": 1}]
+    assert seen[0]["star_lists"][0]["unknown_in_star_list"] == "kept"
+
+
+def test_upgrade_called_directly_passes_values_through_unconverted(mocker):
+    # upgrade() itself is a pure dict transform: it copies the data but does
+    # not convert what is inside, so a migration called that way may see
+    # tuples, other mappings, model instances and enum members.
+    seen = []
+
+    def _record_argument(data):
+        """
+        Record the argument a stand-in migration receives.
+
+        Parameters
+        ----------
+        data : dict
+            Raw starlist-set data.
+
+        Returns
+        -------
+        dict
+            ``data`` unchanged.
+        """
+        seen.append(data)
+        return data
+
+    legacy = _MIGRATIONS["legacy"]
+    mocker.patch.dict(_MIGRATIONS, {"legacy": legacy._replace(func=_record_argument)})
+    star_list = _legacy_python_data("instances")["star_lists"][0]
+    data = {
+        "star_lists": (star_list, _Mapping({"a": 1})),
+        "filter": _aavso_starlist_legacy.AAVSOFilters(star_list.filter),
+    }
+
+    with pytest.warns(SchemaMigrationWarning):
+        upgrade(data)
+
+    received = seen[0]
+    assert type(received["star_lists"]) is tuple
+    assert type(received["star_lists"][0]) is _aavso_starlist_legacy.StarList
+    assert type(received["star_lists"][1]) is _Mapping
+    assert type(received["filter"]) is _aavso_starlist_legacy.AAVSOFilters

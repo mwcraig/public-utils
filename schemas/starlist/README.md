@@ -149,12 +149,12 @@ generates, archives and runs the tests.
    migration. A migration is never edited once released. It
    takes a dict and returns the migrated dict; `upgrade()` stamps the target
    version on the result. It is given a deep copy, so it may modify its
-   argument in place. The dict is plain JSON data when read with
-   `model_validate_json`, but `model_validate` and the constructor pass on
-   data as given once the frozen model has accepted it: a tuple for a list,
-   another mapping for a dict, an instance of the frozen generation's own
-   `StarList` or `StarItem`, an enum member for a string. `upgrade()` called
-   directly validates nothing. The `_Migration` docstring has the details.
+   argument in place. Through `model_validate_json`, `model_validate` and the
+   constructor, the dict holds only plain JSON data (dicts, lists, strings,
+   numbers, booleans and `None`): data built in Python is converted once the
+   frozen model has accepted it, keeping keys that model ignores. `upgrade()`
+   called directly validates and converts nothing. The `_Migration` docstring
+   has the details.
 6. *New generation only.* Add a `before.json`/`after.json` pair of sample
    files under
    `tests/data/migrations/<old generation>_to_<new generation>/`, e.g.
@@ -185,7 +185,9 @@ file from an older generation goes through three steps:
 1. It is validated against the frozen model of its own generation: is this
    file valid for the schema version it states?
 2. It is upgraded to the current schema version with `upgrade()`, as a plain
-   dict, one generation at a time. Nothing is validated between migrations.
+   dict, one generation at a time. Data built in Python (tuples, other
+   mappings, model instances, enum members) is first converted to plain JSON
+   data. Nothing is validated between migrations.
 3. The result is validated against the current model.
 
 A file already in the current generation only gets step 3.
@@ -206,7 +208,8 @@ The first two steps are also available on their own:
   file (which states the current version), the frozen model for an older one.
 - `upgrade(data)` takes the parsed dict and returns a dict in the current
   generation, stamped with the current version. The result is always a copy; the
-  input is not modified. It does not validate.
+  input is not modified. It does not validate, and it passes the values
+  inside to the migrations as given, without converting them to plain data.
 
 A file from an older version of the current generation needs no migration; it
 is read without a warning, and the object states the current version.
