@@ -84,7 +84,7 @@ legacy file and upgraded with a warning, see below). The generated
 | Change | From 1.0.0 on | While 0.y.z |
 | --- | --- | --- |
 | Description/docs only | patch | patch |
-| New optional field | minor | minor |
+| New optional field | minor | patch |
 | New required field, removal, changed meaning | major | minor |
 
 A *generation* is a set of versions that need no migration between them: a
@@ -138,11 +138,14 @@ A change that crosses a generation boundary also needs the following. Do step
    `legacy_to_0.2`, `0.2_to_0.3`, `0.9_to_1`. `before.json` must be valid for
    the frozen model of the old generation and `after.json` for the new one.
 
-While the schema is `0.y.z`, every minor bump is a new generation, so even a new
-optional field (0.2 → 0.3) needs steps 5 to 7;
-`test_migration_chain_reaches_current_generation` fails without them. When no
-data has to change, `_migrate_legacy_to_0_2` is the template for a no-op
-migration.
+While the schema is `0.y.z`, every minor bump is a new generation, but only a
+breaking change takes one: a new optional field is a patch bump (0.2.0 →
+0.2.1) and needs only steps 1 to 4. This is the convention Cargo uses for
+`0.y.z` versions, chosen so that a minor bump while `0.y.z`, like a major bump
+from 1.0.0 on, always means a migration is needed. A breaking change (0.2 →
+0.3) needs steps 5 to 7; `test_migration_chain_reaches_current_generation`
+fails without them. When no data has to change, `_migrate_legacy_to_0_2` is
+the template for a no-op migration.
 
 #### Reading starlist files
 
@@ -183,8 +186,9 @@ Version handling applies to mappings and JSON input, not to `from_attributes`
 validation.
 
 A file from any newer version, even one in the same generation, is refused
-with `NewerSchemaVersionError`: this version cannot know what changed, and from
-1.x a newer minor version may add fields it would silently drop. The `schema_version` pattern in the generated schema lists exactly
+with `NewerSchemaVersionError`: this version cannot know what changed, and a
+newer version in the same generation (a patch while `0.y.z`, a minor from
+1.0.0 on) may add fields it would silently drop. The `schema_version` pattern in the generated schema lists exactly
 the versions that are read without upgrading.
 
 When a file is upgraded, a `SchemaMigrationWarning` is issued naming the

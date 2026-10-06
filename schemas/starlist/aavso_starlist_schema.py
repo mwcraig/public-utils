@@ -724,8 +724,9 @@ def _supported_generation(data):
     supported = _parse_semver(SCHEMA_VERSION)
     parsed = None if generation == "legacy" else _parse_semver(original)
     # Any newer version is refused, even in the current generation: this reader
-    # cannot know what changed, and from 1.x a newer minor may add fields it
-    # would silently drop.
+    # cannot know what changed, and a newer version of its own generation (a
+    # patch while 0.y.z, a minor from 1.0.0 on) may add fields it would
+    # silently drop.
     if parsed is not None and parsed > supported:
         raise NewerSchemaVersionError(
             f"File has schema_version {original!r}, newer than the "

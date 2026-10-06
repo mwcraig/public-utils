@@ -270,8 +270,9 @@ def test_model_applies_version_handling_to_any_mapping(next_generation_version):
 def test_newer_version_raises(next_generation_version):
     # Any version newer than the current one, even a patch bump in the same
     # generation, is an error telling the user to upgrade the package, not a
-    # validation error: this reader cannot know what changed, and from 1.x a
-    # newer minor may add fields it would silently drop.
+    # validation error: this reader cannot know what changed, and a newer
+    # version of its own generation (a patch while 0.y.z, a minor from 1.0.0
+    # on) may add fields it would silently drop.
     major, minor, patch = SCHEMA_VERSION.split(".")
     next_patch = f"{major}.{minor}.{int(patch) + 1}"
     for version in ["9.0.0", next_generation_version, next_patch]:
