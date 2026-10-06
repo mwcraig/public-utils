@@ -253,6 +253,20 @@ def test_each_migration_step_receives_data_stamped_with_its_source_version(mocke
     assert result["schema_version"] == "1.0.0"
 
 
+def test_gap_in_migration_chain_names_the_generation_without_a_migration(mocker):
+    # A breaking bump whose migration out of the generation being left has not
+    # been written yet must say so, not fail with a bare KeyError. Simulate a
+    # bump to 1.0.0 with no migration out of 0.2: a legacy file still has its
+    # first step, then has nowhere to go.
+    mocker.patch("aavso_starlist_schema.SCHEMA_VERSION", "1.0.0")
+    expected = "no migration out of schema generation '0.2'"
+
+    with pytest.raises(UnsupportedSchemaVersionError, match=expected):
+        upgrade({"star_lists": []})
+    with pytest.raises(UnsupportedSchemaVersionError, match=expected):
+        StarListSet.model_validate({"star_lists": []})
+
+
 def test_model_applies_version_handling_to_any_mapping(next_generation_version):
     # A mapping that is not a dict gets the same version handling as a dict:
     # a legacy one is upgraded and a newer one is refused.

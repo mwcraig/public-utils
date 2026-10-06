@@ -873,6 +873,12 @@ def upgrade(data):
 
     summaries = []
     while generation != current_generation:
+        if generation not in _MIGRATIONS:
+            raise UnsupportedSchemaVersionError(
+                f"There is no migration out of schema generation {generation!r} "
+                f"toward {SCHEMA_VERSION!r}. This is a gap in the migration chain "
+                "of aavso-starlist-schema, not a problem with the file."
+            )
         step = _MIGRATIONS[generation]
         upgraded = step.func(upgraded)
         # Stamp each step's result, so the next step sees the version it

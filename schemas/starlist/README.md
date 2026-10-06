@@ -168,8 +168,10 @@ generates, archives and runs the tests.
 A breaking bump without its migration fails many tests, not one. With no
 migration out of the generation being left, files of every older generation
 have no path to the current one either, so each test that upgrades a legacy
-file fails too, mostly with `DID NOT WARN` or a `KeyError` naming the
-generation being left. Look first at
+file fails too. Most report `DID NOT WARN`, because the upgrade stops before
+it warns; the traceback below shows the `UnsupportedSchemaVersionError` that
+names the generation with no migration and calls it a gap in the migration
+chain. Look first at
 `test_migration_chain_reaches_current_generation`, which names the missing
 migration. A migration without its sample files fails
 `test_each_migration_step_matches_its_before_after_pair`.
