@@ -483,13 +483,16 @@ class StarList(BaseModel, PrettyPrintMixin, GenerateInstanceFromExamplesMixin):
             allow_inf_nan=False,
             title="Bias Level",
             description=(
-                "Bias (offset) level of this frame in adu: the constant "
-                "pedestal the camera adds to every pixel, as a zero-second "
-                "exposure with no light would read, as present in the pixel "
-                "values the counts in this star list were measured from. "
-                "Required: a new file should give a number. `null` means the "
-                "bias was not reported; files upgraded from a schema version "
-                "before 0.4.0 carry `null`."
+                "Bias (offset) level of this frame in adu: the value "
+                "`bkgd_count` would hold with no photon arrivals and no dark "
+                "current, in the pixel values the counts in this star list "
+                "were measured from. For a frame the vendor has "
+                "dark-subtracted and then offset to keep pixel values "
+                "positive, this is that fixed offset. For a raw frame with no "
+                "dark, flat or bias correction, it is the mean level of a "
+                "bias frame. Required: a new file should give a number. "
+                "`null` means the bias was not reported; files upgraded from "
+                "a schema version before 0.4.0 carry `null`."
             ),
             json_schema_extra=dict(unit="adu"),
             examples=[1000.0]
